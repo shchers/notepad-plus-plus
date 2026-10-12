@@ -1,0 +1,53 @@
+# Native Linux (GTK 3) port: build, test and package.
+# Only runs when the port or the upstream sources it compiles change.
+name: Linux GTK port
+
+on:
+  push:
+    paths: ['linux/**', 'scintilla/**', 'lexilla/**', 'boostregex/**', 'PowerEditor/src/**', '.github/workflows/linux-gtk.yml']
+  pull_request:
+    paths: ['linux/**', 'scintilla/**', 'lexilla/**', 'boostregex/**', 'PowerEditor/src/**', '.github/workflows/linux-gtk.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: linux/scripts/install-build-deps.sh
+
+      - name: Configure
+        run: cmake -S linux -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DNPP_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (headless)
+        run: env -u DISPLAY ctest --test-dir build --output-on-failure
+
+      - name: Package (CPack)
+        run: cpack --config build/CPackConfig.cmake -B build/pkg
+
+      - name: Package (debhelper) + lintian
+        run: linux/scripts/build-deb.sh
+
+      - name: Install on a clean container
+        run: |
+          docker run --rm -v "$PWD/dist":/dist ubuntu:24.04 bash -c \
+            'apt-get update -qq && apt-get install -y -qq --no-install-recommends /dist/notepad-plus-plus-gtk_*_amd64.deb && notepad-plus-plus-gtk --version'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notepad-plus-plus-gtk-deb
+          path: |
+            dist/*.deb
+            build/pkg/*.deb
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build (tests run inside)
+        run: docker build -f linux/docker/Dockerfile --target artifact --output type=local,dest=dist-docker .

@@ -1,0 +1,5 @@
+notepad-plus-plus-gtk (8.9.8.1-1) unstable; urgency=medium
+
+  * Initial native GTK 3 port preview of Notepad++ 8.9.8.1.
+
+ -- Sergii Shcherbakov <shchers@gmail.com>  Mon, 12 Oct 2026 12:00:00 +0200

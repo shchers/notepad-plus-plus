@@ -1,0 +1,63 @@
+.TH NOTEPAD-PLUS-PLUS-GTK 1 "October 2026" "Notepad++ GTK port" "User Commands"
+.SH NAME
+notepad-plus-plus-gtk \- Notepad++ source code editor, native GTK 3 port (preview)
+.SH SYNOPSIS
+.B notepad-plus-plus-gtk
+[\fB\-n\fIline\fR] [\fB\-c\fIcolumn\fR] [\fB\-l\fIlanguage\fR] [\fB\-ro\fR] [\fIfile\fR ...]
+.SH DESCRIPTION
+.B notepad-plus-plus-gtk
+is an unofficial native Linux build of the Notepad++ source tree. It uses the
+GTK 3 backend of Scintilla, the Lexilla lexers, and the language, style and
+theme definitions shipped with Notepad++.
+.PP
+Files given on the command line are opened in tabs. A file that does not
+exist yet is opened empty and created on first save.
+.SH OPTIONS
+Switches follow the Notepad++ command line syntax.
+.TP
+.BI \-n line
+Move the caret to \fIline\fR (1-based) in the opened files.
+.TP
+.BI \-c column
+Move the caret to \fIcolumn\fR (1-based).
+.TP
+.BI \-l language
+Apply \fIlanguage\fR instead of detecting it from the file name, for example
+\fB\-lpython\fR or \fB\-l"C++"\fR.
+.TP
+.B \-ro
+Open the files read-only.
+.TP
+.BI \-\-exit\-after= ms
+Quit after \fIms\fR milliseconds (used by automated smoke tests).
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.B \-\-help
+Print a usage summary and exit.
+.PP
+\fB\-multiInst\fR, \fB\-nosession\fR, \fB\-notabbar\fR, \fB\-nosys\fR and
+\fB\-noPlugin\fR are accepted for compatibility and ignored.
+.SH FILES
+.TP
+.I ~/.config/notepad-plus-plus-gtk/settings.ini
+View and window settings.
+.TP
+.I ~/.config/notepad-plus-plus-gtk/langs.xml
+.TQ
+.I ~/.config/notepad-plus-plus-gtk/stylers.xml
+Optional user overrides of the shipped language and style definitions
+(same format as Notepad++ on Windows).
+.TP
+.I ~/.config/notepad-plus-plus-gtk/themes/
+Additional Notepad++ theme files.
+.TP
+.I /usr/share/notepad-plus-plus-gtk/
+Shipped language, style and theme definitions.
+.SH ENVIRONMENT
+.TP
+.B NPP_GTK_DATA_DIR
+Overrides the directory holding the shipped definitions.
+.SH SEE ALSO
+https://notepad-plus-plus.org/

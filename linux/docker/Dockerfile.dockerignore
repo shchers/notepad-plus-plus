@@ -1,0 +1,17 @@
+# Used automatically by BuildKit for linux/docker/Dockerfile (context = repo root).
+# Keep the context small: only sources the port compiles or installs.
+.git
+**/build
+**/build-*
+dist
+obj-*
+debian/.debhelper
+debian/notepad-plus-plus-gtk
+debian/tmp
+*.deb
+PowerEditor/bin
+PowerEditor/visual.net
+PowerEditor/gcc
+PowerEditor/installer/*
+!PowerEditor/installer/themes
+.pc

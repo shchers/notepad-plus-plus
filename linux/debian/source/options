@@ -1,0 +1,9 @@
+# Local build trees are not part of the source package.
+extend-diff-ignore = "^(build[^/]*|dist|obj-[^/]*)/"
+tar-ignore = "build*"
+tar-ignore = "dist"
+tar-ignore = "obj-*"
+# Later Debian revisions reuse the first orig tarball (archives require it);
+# changes to the tree since then are recorded as one patch automatically.
+single-debian-patch
+auto-commit
