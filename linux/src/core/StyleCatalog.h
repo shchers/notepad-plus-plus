@@ -29,7 +29,26 @@ struct Style {
 
 class StyleCatalog {
 public:
+    struct LexerInfo {
+        std::string name; // "cpp"
+        std::string desc; // "C++"
+        std::string ext;  // user extensions (Style Configurator "User ext.")
+    };
+
     bool load(const std::filesystem::path& stylersXml, std::string* error = nullptr);
+    // Writes the styles into a copy of the file they were loaded from, so
+    // everything the port does not model is kept (upstream WordStyleDlg Save).
+    bool save(const std::filesystem::path& target, std::string* error = nullptr) const;
+    const std::filesystem::path& source() const { return source_; }
+
+    // Lexers in file order, and editable style lists (Style Configurator).
+    const std::vector<LexerInfo>& lexers() const { return lexerInfo_; }
+    std::vector<Style>* mutableLexer(std::string_view name);
+    std::vector<Style>& mutableGlobals() { return globals_; }
+    void setLexerExt(std::string_view name, std::string ext);
+
+    // Scintilla 0xBBGGRR -> "RRGGBB".
+    static std::string toHex(std::uint32_t bgr);
 
     // Styles for a lexer keyed by Notepad++ language name ("cpp"); nullptr if none.
     const std::vector<Style>* forLanguage(std::string_view langName) const;
@@ -43,6 +62,8 @@ public:
 private:
     std::unordered_map<std::string, std::vector<Style>> lexers_;
     std::vector<Style> globals_;
+    std::vector<LexerInfo> lexerInfo_;
+    std::filesystem::path source_;
 };
 
 } // namespace npp::core

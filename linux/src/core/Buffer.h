@@ -17,11 +17,14 @@
 
 namespace npp::core {
 
+struct UserLanguage;
+
 struct Buffer {
     std::filesystem::path path;    // empty for "new N"
     std::string untitledName;
     platform::TextEncoding encoding;
     const Language* language = nullptr;
+    const UserLanguage* userLanguage = nullptr; // set for a User Defined Language (language is then plain text)
     bool userReadOnly = false;     // Edit > Read-Only and -ro
 
     // Dirty without an undoable edit: encoding conversion, or text restored

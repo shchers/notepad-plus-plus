@@ -1,6 +1,7 @@
 # Install layout (FHS):
 #   bin/notepad-plus-plus-gtk
-#   share/notepad-plus-plus-gtk/{langs.model.xml,stylers.model.xml,themes/}
+#   share/notepad-plus-plus-gtk/{langs.model.xml,stylers.model.xml,themes/,
+#                                nativeLang/,userDefineLangs/}
 #   share/applications/<app-id>.desktop
 #   share/icons/hicolor/<size>/apps/notepad-plus-plus-gtk.png
 #   share/man/man1/notepad-plus-plus-gtk.1.gz
@@ -14,6 +15,12 @@ install(FILES "${NPP_SRC}/langs.model.xml" "${NPP_SRC}/stylers.model.xml"
         DESTINATION ${NPP_DATA_SUBDIR})
 install(DIRECTORY "${NPP_ROOT}/PowerEditor/installer/themes/"
         DESTINATION ${NPP_DATA_SUBDIR}/themes
+        FILES_MATCHING PATTERN "*.xml")
+install(DIRECTORY "${NPP_ROOT}/PowerEditor/installer/nativeLang/"
+        DESTINATION ${NPP_DATA_SUBDIR}/nativeLang
+        FILES_MATCHING PATTERN "*.xml")
+install(DIRECTORY "${NPP_ROOT}/PowerEditor/bin/userDefineLangs/"
+        DESTINATION ${NPP_DATA_SUBDIR}/userDefineLangs
         FILES_MATCHING PATTERN "*.xml")
 
 configure_file("${_pkg}/notepad-plus-plus-gtk.desktop.in"

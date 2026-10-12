@@ -1,0 +1,135 @@
+# Generates CommandTables.generated.h from upstream sources:
+#
+#   kDefaultKeys        Parameters.cpp winKeyDefs[]: default shortcut of every
+#                       menu command (Windows virtual-key code + modifiers),
+#                       with the virtual-key values taken from keys.h
+#   kMacroRecordable    NppCommands.cpp: the menu commands upstream records
+#                       into macros (the case labels of the `if (_recordingMacro)`
+#                       switch before its first push_back)
+#
+# Command IDs are emitted as identifiers (IDM_*, IDC_*), resolved by
+# upstream's menuCmdID.h / resource.h, which are plain #define headers.
+
+set(_params "${NPP_SRC}/Parameters.cpp")
+set(_keys "${NPP_SRC}/keys.h")
+set(_cmds "${NPP_SRC}/NppCommands.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_params}" "${_keys}" "${_cmds}")
+
+# --- virtual-key names -> values -------------------------------------------
+file(STRINGS "${_keys}" _vk_lines REGEX "^#define[ \t]+VK_[A-Z0-9_]+[ \t]+0x[0-9A-Fa-f]+")
+foreach(_l IN LISTS _vk_lines)
+  string(REGEX MATCH "^#define[ \t]+(VK_[A-Z0-9_]+)[ \t]+(0x[0-9A-Fa-f]+)" _m "${_l}")
+  set(_VKV_${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+endforeach()
+# keys.h only adds what <winuser.h> lacks; the rest are fixed Win32 values.
+foreach(_pair
+    "VK_BACK=0x08" "VK_TAB=0x09" "VK_RETURN=0x0D" "VK_ESCAPE=0x1B" "VK_SPACE=0x20"
+    "VK_PRIOR=0x21" "VK_NEXT=0x22" "VK_END=0x23" "VK_HOME=0x24" "VK_LEFT=0x25" "VK_UP=0x26"
+    "VK_RIGHT=0x27" "VK_DOWN=0x28" "VK_INSERT=0x2D" "VK_DELETE=0x2E"
+    "VK_NUMPAD0=0x60" "VK_NUMPAD1=0x61" "VK_NUMPAD2=0x62" "VK_NUMPAD3=0x63" "VK_NUMPAD4=0x64"
+    "VK_NUMPAD5=0x65" "VK_NUMPAD6=0x66" "VK_NUMPAD7=0x67" "VK_NUMPAD8=0x68" "VK_NUMPAD9=0x69"
+    "VK_MULTIPLY=0x6A" "VK_ADD=0x6B" "VK_SUBTRACT=0x6D" "VK_DECIMAL=0x6E" "VK_DIVIDE=0x6F"
+    "VK_F1=0x70" "VK_F2=0x71" "VK_F3=0x72" "VK_F4=0x73" "VK_F5=0x74" "VK_F6=0x75" "VK_F7=0x76"
+    "VK_F8=0x77" "VK_F9=0x78" "VK_F10=0x79" "VK_F11=0x7A" "VK_F12=0x7B"
+    "VK_OEM_1=0xBA" "VK_OEM_PLUS=0xBB" "VK_OEM_COMMA=0xBC" "VK_OEM_MINUS=0xBD" "VK_OEM_PERIOD=0xBE"
+    "VK_OEM_2=0xBF" "VK_OEM_3=0xC0" "VK_OEM_4=0xDB" "VK_OEM_5=0xDC" "VK_OEM_6=0xDD" "VK_OEM_7=0xDE")
+  string(REPLACE "=" ";" _kv "${_pair}")
+  list(GET _kv 0 _k)
+  list(GET _kv 1 _v)
+  if(NOT DEFINED _VKV_${_k})
+    set(_VKV_${_k} "${_v}")
+  endif()
+endforeach()
+
+# --- winKeyDefs -------------------------------------------------------------
+file(READ "${_params}" _ptext)
+string(FIND "${_ptext}" "winKeyDefs[]" _start)
+string(FIND "${_ptext}" "scintKeyDefs[]" _end)
+if(_start LESS 0 OR _end LESS _start)
+  message(FATAL_ERROR "winKeyDefs[] not found in ${_params}; update GenerateCommandTables.cmake")
+endif()
+math(EXPR _len "${_end} - ${_start}")
+string(SUBSTRING "${_ptext}" ${_start} ${_len} _table)
+string(REGEX REPLACE "//[^\n]*" "" _table "${_table}") # commented-out rows
+string(REGEX MATCHALL
+  "\\{[ \t]*VK_[A-Z0-9_]+,[ \t]*[A-Z_0-9]+,[ \t]*(true|false),[ \t]*(true|false),[ \t]*(true|false),[ \t]*(nullptr|L\"[^\"]*\")[ \t]*\\}"
+  _rows "${_table}")
+set(_keys_body "")
+set(_nkeys 0)
+foreach(_row IN LISTS _rows)
+  string(REGEX MATCH
+    "\\{[ \t]*(VK_[A-Z0-9_]+),[ \t]*([A-Z_0-9]+),[ \t]*(true|false),[ \t]*(true|false),[ \t]*(true|false),[ \t]*(nullptr|L\"([^\"]*)\")"
+    _m "${_row}")
+  set(_vk "${CMAKE_MATCH_1}")
+  if(NOT DEFINED _VKV_${_vk})
+    message(FATAL_ERROR "Unknown virtual key ${_vk} in winKeyDefs; add it to GenerateCommandTables.cmake")
+  endif()
+  if(CMAKE_MATCH_6 STREQUAL "nullptr")
+    set(_name "nullptr")
+  else()
+    set(_name "\"${CMAKE_MATCH_7}\"")
+  endif()
+  string(APPEND _keys_body "    {${_VKV_${_vk}}, ${CMAKE_MATCH_2}, ${CMAKE_MATCH_3}, ${CMAKE_MATCH_4}, ${CMAKE_MATCH_5}, ${_name}},\n")
+  math(EXPR _nkeys "${_nkeys} + 1")
+endforeach()
+if(_nkeys LESS 200)
+  message(FATAL_ERROR "Only ${_nkeys} rows extracted from winKeyDefs[]; update GenerateCommandTables.cmake")
+endif()
+
+# --- macro-recordable commands -------------------------------------------------
+file(READ "${_cmds}" _ctext)
+string(FIND "${_ctext}" "if (_recordingMacro)\n\t\tswitch (id)" _mstart)
+if(_mstart LESS 0)
+  message(FATAL_ERROR "Macro recording switch not found in ${_cmds}; update GenerateCommandTables.cmake")
+endif()
+string(SUBSTRING "${_ctext}" ${_mstart} -1 _mrest)
+string(FIND "${_mrest}" "_macro.push_back" _mend)
+string(SUBSTRING "${_mrest}" 0 ${_mend} _mblock)
+string(REGEX MATCHALL "case[ \t]+(IDM_[A-Z_0-9]+|IDC_[A-Z_0-9]+)" _cases "${_mblock}")
+set(_macro_body "")
+set(_nmacro 0)
+foreach(_c IN LISTS _cases)
+  string(REGEX REPLACE "case[ \t]+" "" _id "${_c}")
+  string(APPEND _macro_body "    ${_id},\n")
+  math(EXPR _nmacro "${_nmacro} + 1")
+endforeach()
+if(_nmacro LESS 100)
+  message(FATAL_ERROR "Only ${_nmacro} macro-recordable commands found; update GenerateCommandTables.cmake")
+endif()
+
+set(_out "${NPP_GENERATED_DIR}/CommandTables.generated.h")
+set(_content "// Generated by linux/cmake/GenerateCommandTables.cmake from
+// PowerEditor/src/Parameters.cpp (winKeyDefs), keys.h and NppCommands.cpp.
+// Do not edit.
+#pragma once
+
+#include \"menuCmdID.h\"
+#include \"resource.h\"
+
+namespace npp::gen {
+
+struct DefaultKey {
+    int vk;             // Windows virtual-key code, 0 = no default key
+    int id;             // command ID
+    bool ctrl, alt, shift;
+    const char* name;   // Shortcut Mapper name when it differs from the menu text
+};
+
+inline constexpr DefaultKey kDefaultKeys[] = {
+${_keys_body}};
+
+// Menu commands recorded into macros (upstream NppCommands.cpp).
+inline constexpr int kMacroRecordable[] = {
+${_macro_body}};
+
+} // namespace npp::gen
+")
+if(EXISTS "${_out}")
+  file(READ "${_out}" _old)
+else()
+  set(_old "")
+endif()
+if(NOT _old STREQUAL _content)
+  file(WRITE "${_out}" "${_content}")
+endif()
+message(STATUS "Generated command tables: ${_nkeys} default keys, ${_nmacro} macro-recordable commands")

@@ -21,9 +21,13 @@ Recommends: adwaita-icon-theme, fonts-dejavu-core, librsvg2-common
 Description: Notepad++ source code editor - native GTK 3 port (preview)
  Unofficial native Linux build of the Notepad++ source tree using the GTK 3
  backend of Scintilla. This preview provides tabbed editing in two views,
- syntax highlighting for all Notepad++ languages via Lexilla, Notepad++
- colour themes, encoding detection, Boost-regex find/replace, sessions with
- snapshots of unsaved documents, recent files, detection of outside file
- changes, and a single-instance mode compatible with Notepad++ switches.
+ syntax highlighting for all Notepad++ languages via Lexilla and User Defined
+ Languages, Notepad++ colour themes and the Style Configurator, encoding
+ detection, the Find / Replace / Find in Files / Mark dialog with Boost
+ regex and a search results panel, macros, Run commands, the Shortcut Mapper,
+ Preferences, Notepad++ translations, printing, sessions with snapshots of
+ unsaved documents, recent files, detection of outside file changes, and a
+ single-instance mode compatible with Notepad++ switches. Notepad++'s
+ shortcuts.xml, stylers.xml, themes and userDefineLang.xml work unchanged.
  .
- Plugins, docking panels, macros and the Preferences dialog are not yet ported.
+ Plugins, docking panels and auto-completion are not yet ported.

@@ -43,14 +43,19 @@ sudo apt install ./dist/notepad-plus-plus-gtk_*.deb
 
 Tabs in two views (move and clone documents between them), open/save with
 encoding detection (UTF-8, BOM, UTF-16, legacy code pages via uchardet),
-syntax highlighting for all 95 Notepad++ languages, the 22 upstream colour
-themes, find/replace with Notepad++'s regex semantics, folding, bookmarks,
-auto-indent, line operations, EOL conversion, sessions in Notepad++'s
-`session.xml` format with snapshots of unsaved documents, recent files,
-backup on save, detection of files changed outside the editor, a single
-running instance, import of a Windows `config.xml`, and Notepad++ keyboard
-shortcuts and command-line switches. Docking panels, plugins, macros and the
-Preferences dialog are not ported yet. The full table is in
+syntax highlighting for all 95 Notepad++ languages and User Defined
+Languages, the 22 upstream colour themes and the Style Configurator, the
+Find / Replace / Find in Files / Mark dialog with Notepad++'s regex
+semantics and its search results panel, incremental search, the Edit menu's
+line, case and blank operations, the Column Editor, macros and Run commands,
+the Shortcut Mapper, Preferences, all Notepad++ translations, printing,
+folding, bookmarks, sessions in Notepad++'s `session.xml` format with
+snapshots of unsaved documents, recent files, backup on save, detection of
+files changed outside the editor and a single running instance. Notepad++'s
+own files work as they are: `shortcuts.xml` (keys, macros, Run commands),
+`stylers.xml` and themes, `userDefineLang.xml`, `session.xml`, and a Windows
+`config.xml` can be imported. Docking panels, auto-completion and plugins
+are not ported yet. The full table is in
 [docs/PORTING.md §4](docs/PORTING.md#4-what-works-today).
 
 ## Layout
@@ -58,14 +63,16 @@ Preferences dialog are not ported yet. The full table is in
 ```
 linux/
 ├── CMakeLists.txt          entry point (reads version from PowerEditor/src/resource.h)
-├── cmake/                  third-party targets, generated language table, install, CPack
+├── cmake/                  third-party targets, generated language and command tables, install, CPack
 ├── compat/lexuser/         empty <windows.h> stand-in used only for lexilla/lexers/LexUser.cxx
 ├── src/
-│   ├── core/               UI-free model: languages, styles, lexer keyword plans,
-│   │                       buffers, sessions, recent files, config.xml import
+│   ├── core/               UI-free model: languages, styles, UDLs, lexer keyword plans,
+│   │                       buffers, sessions, recent files, config.xml import, search
+│   │                       engine, Find in Files, Edit operations, shortcuts.xml, nativeLang
 │   ├── platform/           OS services: XDG paths, encodings, file I/O and
 │   │                       monitoring (GIO), settings
-│   ├── ui/                 GTK 3: EditorView (Scintilla), MainWindow, FindBar
+│   ├── ui/                 GTK 3: EditorView (Scintilla), MainWindow, menus and commands,
+│   │                       Find dialog, search results, dialogs, printing
 │   └── main.cpp            CLI compatible with Notepad++ switches
 ├── tests/                  headless CTest suite (Xvfb)
 ├── packaging/              .desktop, icons, man page, copyright, CPack maintainer scripts

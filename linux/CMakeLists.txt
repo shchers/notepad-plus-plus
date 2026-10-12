@@ -66,6 +66,7 @@ pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0>=3.22 gmodule-no-export
 
 include(cmake/ThirdParty.cmake)
 include(cmake/GenerateLangTable.cmake)
+include(cmake/GenerateCommandTables.cmake)
 
 add_subdirectory(src)
 if(NPP_BUILD_TESTS)

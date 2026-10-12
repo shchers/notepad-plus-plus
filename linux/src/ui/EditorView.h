@@ -8,7 +8,9 @@
 #pragma once
 
 #include "core/LanguageCatalog.h"
+#include "core/Sci.h"
 #include "core/StyleCatalog.h"
+#include "core/UserLanguage.h"
 
 // Order matters: ScintillaWidget.h expects GTK types to be declared.
 #include <gtk/gtk.h>
@@ -46,6 +48,8 @@ public:
     {
         return directFn_(directPtr_, msg, wParam, lParam);
     }
+    // The same seam for UI-free core code (search, line operations, macros).
+    core::Sci sci() const { return {directFn_, directPtr_}; }
 
     // Applies global styles (default font, caret line, selection, margins)
     // and then the language's lexer, keywords and styles. `langs` is needed
@@ -53,6 +57,12 @@ public:
     // HTML, Doxygen keywords from C++).
     void applyLanguage(const core::Language& lang, const core::LanguageCatalog& langs, const core::StyleCatalog& styles);
     const core::Language* language() const { return lang_; }
+    // A Lexilla lexer by name with the theme's styles for `styleGroup`
+    // (stylers.xml LexerType name) — for views that are not documents, such
+    // as the search results panel.
+    void applyLexer(const char* lexillaName, std::string_view styleGroup, const core::StyleCatalog& styles);
+    // A User Defined Language through Lexilla's "user" lexer (upstream setUserLexer).
+    void applyUserLanguage(const core::UserLanguage& udl, const core::StyleCatalog& styles, long udlId);
 
     std::string text() const;
     void setText(std::string_view utf8);       // replaces content, clears undo, sets save point
@@ -97,6 +107,15 @@ public:
     std::function<void(std::string_view uriList)> onUriDropped;
     std::function<void()> onTextModified;             // text inserted or deleted
     std::function<void()> onFocusIn;
+    std::function<void(sptr_t position)> onDoubleClick;
+    // SCN_MACRORECORD while recording (SCI_STARTRECORD).
+    std::function<void(int message, uptr_t wParam, sptr_t lParam)> onMacroRecord;
+    bool showLineNumbers = true;
+    void setLineNumbersVisible(bool on);
+    // Upstream Preferences > Margins "Fold Margin Style": 0 Simple, 1 Arrow,
+    // 2 Circle tree, 3 Box tree, 4 None.
+    void setFoldStyle(int style);
+    void setBookmarkMarginVisible(bool on);
 
 private:
     static void onNotify(GtkWidget*, gint, gpointer notification, gpointer self);

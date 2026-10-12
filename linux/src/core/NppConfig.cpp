@@ -102,9 +102,9 @@ std::optional<NppConfig> readNppConfig(const fs::path& configXml, std::string* e
         } else if (!std::strcmp(nm, "ScintillaPrimaryView")) {
             c.wordWrap = boolAttr(g, "Wrap");
             c.showIndentGuides = boolAttr(g, "indentGuideLine");
-            const auto ws = boolAttr(g, "whiteSpaceShow"), eol = boolAttr(g, "eolShow");
-            if (ws && eol)
-                c.showAllChars = *ws && *eol;
+            c.showSpaces = boolAttr(g, "whiteSpaceShow");
+            c.showEol = boolAttr(g, "eolShow");
+            c.showWrapSymbol = boolAttr(g, "wrapSymbolShow");
             if (g.attribute("zoom"))
                 c.zoom = g.attribute("zoom").as_int();
         } else if (!std::strcmp(nm, "DarkMode")) {
@@ -148,7 +148,9 @@ int applyNppConfig(const NppConfig& c, platform::Settings& s)
     set(s.replaceTabsBySpace, c.replaceTabsBySpace);
     set(s.autoIndent, c.autoIndent);
     set(s.wordWrap, c.wordWrap);
-    set(s.showAllChars, c.showAllChars);
+    set(s.showSpaces, c.showSpaces);
+    set(s.showEol, c.showEol);
+    set(s.showWrapSymbol, c.showWrapSymbol);
     set(s.showIndentGuides, c.showIndentGuides);
     set(s.zoom, c.zoom);
     set(s.maxRecentFiles, c.maxRecentFiles);

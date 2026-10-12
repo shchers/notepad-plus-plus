@@ -1,5 +1,6 @@
 #include "ui/EditorView.h"
 
+#include "core/EditOps.h"
 #include "core/LexerSetup.h"
 
 #include <ILexer.h> // must precede Lexilla.h
@@ -137,6 +138,42 @@ void EditorView::setupDefaults()
     updateLineNumberWidth();
 }
 
+void EditorView::setLineNumbersVisible(bool on)
+{
+    if (showLineNumbers == on)
+        return;
+    showLineNumbers = on;
+    lineNumberDigits_ = -1;
+    updateLineNumberWidth();
+}
+
+void EditorView::setBookmarkMarginVisible(bool on)
+{
+    execute(SCI_SETMARGINWIDTHN, kMarginSymbol, on ? 16 : 0);
+}
+
+void EditorView::setFoldStyle(int style)
+{
+    // Upstream ScintillaEditView::setMakerStyle / markersArray.
+    static const int kMarkers[] = {SC_MARKNUM_FOLDEROPEN, SC_MARKNUM_FOLDER, SC_MARKNUM_FOLDERSUB, SC_MARKNUM_FOLDERTAIL,
+                                   SC_MARKNUM_FOLDEREND, SC_MARKNUM_FOLDEROPENMID, SC_MARKNUM_FOLDERMIDTAIL};
+    static const int kStyles[4][7] = {
+        {SC_MARK_MINUS, SC_MARK_PLUS, SC_MARK_EMPTY, SC_MARK_EMPTY, SC_MARK_EMPTY, SC_MARK_EMPTY, SC_MARK_EMPTY},
+        {SC_MARK_ARROWDOWN, SC_MARK_ARROW, SC_MARK_EMPTY, SC_MARK_EMPTY, SC_MARK_EMPTY, SC_MARK_EMPTY, SC_MARK_EMPTY},
+        {SC_MARK_CIRCLEMINUS, SC_MARK_CIRCLEPLUS, SC_MARK_VLINE, SC_MARK_LCORNERCURVE, SC_MARK_CIRCLEPLUSCONNECTED,
+         SC_MARK_CIRCLEMINUSCONNECTED, SC_MARK_TCORNERCURVE},
+        {SC_MARK_BOXMINUS, SC_MARK_BOXPLUS, SC_MARK_VLINE, SC_MARK_LCORNER, SC_MARK_BOXPLUSCONNECTED,
+         SC_MARK_BOXMINUSCONNECTED, SC_MARK_TCORNER},
+    };
+    if (style < 0 || style > 3) {
+        execute(SCI_SETMARGINWIDTHN, kMarginFold, 0);
+        return;
+    }
+    execute(SCI_SETMARGINWIDTHN, kMarginFold, 14);
+    for (int i = 0; i < 7; ++i)
+        execute(SCI_MARKERDEFINE, static_cast<uptr_t>(kMarkers[i]), kStyles[style][i]);
+}
+
 void EditorView::applyStyle(const core::Style& s)
 {
     if (s.id < 0 || s.id > STYLE_MAX)
@@ -207,6 +244,17 @@ void EditorView::applyGlobalStyles(const core::StyleCatalog& styles)
         if (foldActive && foldActive->fg)
             execute(SCI_MARKERSETBACKSELECTED, m, *foldActive->fg);
     }
+    // Search indicators: Find Mark Style, Mark Style 1-5, Incremental highlight
+    // all, Smart Highlighting; their styleID is the indicator number, drawn as
+    // upstream ScintillaEditView::init does.
+    for (int ind : {21, 22, 23, 24, 25, 28, 29, 31}) {
+        execute(SCI_INDICSETSTYLE, static_cast<uptr_t>(ind), INDIC_ROUNDBOX);
+        execute(SCI_INDICSETALPHA, static_cast<uptr_t>(ind), 100);
+        execute(SCI_INDICSETOUTLINEALPHA, static_cast<uptr_t>(ind), 150);
+        execute(SCI_INDICSETUNDER, static_cast<uptr_t>(ind), true);
+        if (const core::Style* s = styles.globalById(ind); s && s->bg)
+            execute(SCI_INDICSETFORE, static_cast<uptr_t>(ind), *s->bg);
+    }
     lineNumberDigits_ = 0; // font may have changed
     updateLineNumberWidth();
 }
@@ -239,6 +287,35 @@ void EditorView::applyLanguage(const core::Language& lang, const core::LanguageC
             for (const core::Style& s : *st)
                 applyStyle(s);
 
+    execute(SCI_COLOURISE, 0, -1);
+}
+
+void EditorView::applyLexer(const char* lexillaName, std::string_view styleGroup, const core::StyleCatalog& styles)
+{
+    lang_ = nullptr;
+    applyGlobalStyles(styles);
+    execute(SCI_SETILEXER, 0, reinterpret_cast<sptr_t>(CreateLexer(lexillaName)));
+    execute(SCI_SETPROPERTY, reinterpret_cast<uptr_t>("fold"), reinterpret_cast<sptr_t>("1"));
+    if (const auto* st = styles.forLanguage(styleGroup))
+        for (const core::Style& s : *st)
+            applyStyle(s);
+    execute(SCI_COLOURISE, 0, -1);
+}
+
+void EditorView::applyUserLanguage(const core::UserLanguage& udl, const core::StyleCatalog& styles, long udlId)
+{
+    lang_ = nullptr;
+    applyGlobalStyles(styles);
+    execute(SCI_SETILEXER, 0, reinterpret_cast<sptr_t>(CreateLexer("user")));
+    // The document identifies LexUser's per-buffer nesting state.
+    const long bufferId = static_cast<long>(reinterpret_cast<std::uintptr_t>(reinterpret_cast<void*>(execute(SCI_GETDOCPOINTER))) & 0x7FFFFFFF);
+    const core::UserLexerSetup plan = core::planUserLexer(udl, udlId, bufferId);
+    for (const auto& [k, v] : plan.properties)
+        execute(SCI_SETPROPERTY, reinterpret_cast<uptr_t>(k.c_str()), reinterpret_cast<sptr_t>(v.c_str()));
+    for (std::size_t i = 0; i < plan.keywordSets.size(); ++i)
+        execute(SCI_SETKEYWORDS, i, reinterpret_cast<sptr_t>(plan.keywordSets[i].c_str()));
+    for (const core::Style& s : plan.styles)
+        applyStyle(s);
     execute(SCI_COLOURISE, 0, -1);
 }
 
@@ -287,46 +364,8 @@ void EditorView::gotoLine(sptr_t line, sptr_t column)
 
 void EditorView::toggleLineComment()
 {
-    if (!lang_ || lang_->commentLine.empty())
-        return;
-    const std::string& tok = lang_->commentLine;
-    const sptr_t selStart = execute(SCI_GETSELECTIONSTART), selEnd = execute(SCI_GETSELECTIONEND);
-    const sptr_t first = lineFromPos(selStart);
-    sptr_t last = lineFromPos(selEnd);
-    if (last > first && execute(SCI_POSITIONFROMLINE, static_cast<uptr_t>(last)) == selEnd)
-        --last; // selection ends at column 0: that line is not part of it
-
-    auto indentPos = [&](sptr_t l) { return execute(SCI_GETLINEINDENTPOSITION, static_cast<uptr_t>(l)); };
-    auto lineEnd = [&](sptr_t l) { return execute(SCI_GETLINEENDPOSITION, static_cast<uptr_t>(l)); };
-    auto startsWithTok = [&](sptr_t l) {
-        const sptr_t p = indentPos(l);
-        if (lineEnd(l) - p < static_cast<sptr_t>(tok.size()))
-            return false;
-        const char* s = reinterpret_cast<const char*>(execute(SCI_GETRANGEPOINTER, static_cast<uptr_t>(p), tok.size()));
-        return s && std::string_view(s, tok.size()) == tok;
-    };
-
-    bool allCommented = true;
-    for (sptr_t l = first; l <= last; ++l)
-        if (indentPos(l) != lineEnd(l) && !startsWithTok(l))
-            allCommented = false;
-
-    execute(SCI_BEGINUNDOACTION);
-    for (sptr_t l = first; l <= last; ++l) {
-        const sptr_t p = indentPos(l);
-        if (p == lineEnd(l))
-            continue; // blank line
-        if (allCommented) {
-            sptr_t n = static_cast<sptr_t>(tok.size());
-            if (p + n < lineEnd(l) && execute(SCI_GETCHARAT, static_cast<uptr_t>(p + n)) == ' ')
-                ++n;
-            execute(SCI_DELETERANGE, static_cast<uptr_t>(p), n);
-        } else {
-            const std::string ins = tok + " ";
-            execute(SCI_INSERTTEXT, static_cast<uptr_t>(p), reinterpret_cast<sptr_t>(ins.c_str()));
-        }
-    }
-    execute(SCI_ENDUNDOACTION);
+    if (lang_)
+        core::lineComment(sci(), lang_->commentLine, core::LineComment::Toggle);
 }
 
 void EditorView::setEolMode(int mode, bool convertExisting)
@@ -475,6 +514,12 @@ void EditorView::updateLineNumberWidth()
     for (sptr_t n = lineCount(); n >= 10; n /= 10)
         ++digits;
     digits = std::max(digits, 3);
+    if (!showLineNumbers) {
+        if (lineNumberDigits_ != 0)
+            execute(SCI_SETMARGINWIDTHN, kMarginLineNumber, 0);
+        lineNumberDigits_ = 0;
+        return;
+    }
     if (digits == lineNumberDigits_)
         return;
     lineNumberDigits_ = digits;
@@ -534,6 +579,14 @@ void EditorView::handleNotify(const SCNotification& n)
     case SCN_MARGINCLICK:
         if (n.margin == kMarginSymbol)
             toggleBookmark(lineFromPos(n.position));
+        break;
+    case SCN_DOUBLECLICK:
+        if (onDoubleClick)
+            onDoubleClick(n.position);
+        break;
+    case SCN_MACRORECORD:
+        if (onMacroRecord)
+            onMacroRecord(static_cast<int>(n.message), n.wParam, n.lParam);
         break;
     case SCN_URIDROPPED:
         if (onUriDropped && n.text)

@@ -6,7 +6,7 @@
 #include "core/StyleCatalog.h"
 #include "platform/TextCodec.h"
 #include "ui/EditorView.h"
-#include "ui/FindBar.h"
+#include "core/SearchEngine.h"
 
 #include <SciLexer.h>
 #include <gtk/gtk.h>
@@ -123,36 +123,39 @@ static void testEditor(const core::LanguageCatalog& langs, const core::StyleCata
     }
 
     // Boost regex (lookbehind is unsupported by Scintilla's built-in engine and std::regex).
-    ui::SearchOptions o;
-    o.regex = true;
-    o.pattern = "(?<=return )\\d+";
+    core::SearchEngine engine(view.sci());
+    core::FindOptions o;
+    o.mode = core::SearchMode::Regex;
+    o.what = "(?<=return )\\d+";
     view.execute(SCI_GOTOPOS, 0);
-    CHECK(ui::findNext(view, o, true) == ui::SearchResult::Found);
+    CHECK(engine.findNext(o) == core::FindStatus::Found);
     CHECK(view.selectedText() == "42");
-    o.pattern = "(unclosed";
-    CHECK(ui::findNext(view, o, true) == ui::SearchResult::InvalidRegex);
+    o.what = "(unclosed";
+    CHECK(engine.findNext(o) == core::FindStatus::InvalidRegex);
 
     // Regex replace with backreference, single undo step. Boost format_all
     // syntax as on Windows Notepad++: literal parentheses are escaped.
-    o.pattern = "(\\w+)\\(\\)";
-    CHECK(ui::replaceAll(view, o, "\\1\\(void\\)") == 1);
+    o.what = "(\\w+)\\(\\)";
+    o.with = "\\1\\(void\\)";
+    CHECK(engine.replaceAll(o) == 1);
     CHECK(view.text().find("main(void)") != std::string::npos);
     view.execute(SCI_UNDO);
     CHECK(view.text().find("main()") != std::string::npos);
 
     // Empty matches must terminate.
-    o.pattern = "^";
+    o.what = "^";
+    o.with = "> ";
     // Notepad++ semantics: "^" matches the start of each of the 4 lines
     // (including the empty last line).
-    CHECK(ui::replaceAll(view, o, "> ") == 4);
+    CHECK(engine.replaceAll(o) == 4);
     CHECK(view.text().rfind("> int main", 0) == 0);
     view.execute(SCI_UNDO);
 
     // Plain search wraps around.
-    ui::SearchOptions plain;
-    plain.pattern = "int";
+    core::FindOptions plain;
+    plain.what = "int";
     view.execute(SCI_GOTOPOS, static_cast<uptr_t>(view.length()));
-    CHECK(ui::findNext(view, plain, true) == ui::SearchResult::Wrapped);
+    CHECK(engine.findNext(plain) == core::FindStatus::Wrapped);
 
     // Toggle comment uses langs.model.xml commentLine and round-trips.
     view.execute(SCI_SETSEL, 0, view.length());

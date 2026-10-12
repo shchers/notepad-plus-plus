@@ -12,6 +12,8 @@
 #include "platform/TextCodec.h"
 #include "ui/MainWindow.h"
 
+#include "menuCmdID.h"
+
 #include <gtk/gtk.h>
 
 #include <chrono>
@@ -92,12 +94,10 @@ struct Prompter {
     }
 };
 
-// Runs a window action as the menus do ("win.close" -> action "close").
-void activate(ui::MainWindow& w, std::string_view action)
+// Runs a menu command through its window action, as the menus do.
+void activate(ui::MainWindow& w, int id)
 {
-    if (action.starts_with("win."))
-        action.remove_prefix(4);
-    const std::string name(action);
+    const std::string name = ui::CommandTable::actionName(id);
     CHECK(g_action_group_has_action(G_ACTION_GROUP(w.window()), name.c_str()));
     g_action_group_activate_action(G_ACTION_GROUP(w.window()), name.c_str(), nullptr);
     pump();
@@ -210,7 +210,7 @@ void testConfigImport()
     CHECK(!s.autoIndent);
     CHECK(!s.rememberSession);
     CHECK(s.tabSize == 2 && s.replaceTabsBySpace);
-    CHECK(s.wordWrap && !s.showIndentGuides && s.showAllChars && s.zoom == 3);
+    CHECK(s.wordWrap && !s.showIndentGuides && s.showSpaces && s.showEol && s.zoom == 3);
     CHECK(s.saveBackup == platform::SaveBackup::Verbose && s.saveBackupDir.empty()); // Windows dir dropped
     CHECK(!s.snapshot && s.snapshotIntervalMs == 9000);
     CHECK(s.theme == "DarkModeDefault.xml"); // shipped theme
@@ -254,7 +254,7 @@ void testViewsAndClones(GtkApplication* app, const core::LanguageCatalog& langs)
     CHECK(w->isModified(*bb) && mainView->isModified());
 
     // Closing one side of a clone asks nothing and keeps the buffer.
-    activate(*w, "win.close");
+    activate(*w, IDM_FILE_CLOSE);
     CHECK(p.asked.empty());
     CHECK(w->tabCount(1) == 0 && w->activeViewIndex() == 0); // empty view hides, focus moves
     CHECK(w->documentCount() == 2 && w->isModified(*bb));
@@ -269,22 +269,26 @@ void testViewsAndClones(GtkApplication* app, const core::LanguageCatalog& langs)
 
     // Closing the last tab of a modified buffer asks; Cancel keeps it.
     p.answers = {Answer::Cancel};
-    activate(*w, "win.close");
+    activate(*w, IDM_FILE_CLOSE);
     CHECK(p.asked.size() == 1 && w->documentCount() == 2);
     p.answers = {Answer::No};
-    activate(*w, "win.close");
+    activate(*w, IDM_FILE_CLOSE);
     CHECK(w->documentCount() == 1);
     // ... and closed files enter the recent list; reopening takes them out.
     CHECK(!w->recentFiles().empty() && w->recentFiles().items().front() == b.string());
-    activate(*w, "win.restore-recent");
+    activate(*w, IDM_FILE_RESTORELASTCLOSEDFILE);
     CHECK(w->documentCount() == 2 && w->activeBuffer()->path == b);
     CHECK(w->recentFiles().empty() || w->recentFiles().items().front() != b.string());
 
     // Edit > Read-Only is per buffer and shared by clones.
-    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), "read-only", g_variant_new_boolean(TRUE));
+    // A check item toggles through "change-state", as GtkModelMenu does.
+    const std::string ro = ui::CommandTable::actionName(IDM_EDIT_TOGGLEREADONLY);
+    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), ro.c_str(), g_variant_new_boolean(TRUE));
     CHECK(w->activeBuffer()->userReadOnly && w->activeView()->execute(SCI_GETREADONLY));
-    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), "read-only", g_variant_new_boolean(FALSE));
+    CHECK(w->commandChecked(IDM_EDIT_TOGGLEREADONLY));
+    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), ro.c_str(), g_variant_new_boolean(FALSE));
     CHECK(!w->activeView()->execute(SCI_GETREADONLY));
+    CHECK(!w->commandChecked(IDM_EDIT_TOGGLEREADONLY));
 }
 
 void testSessionRoundTrip(GtkApplication* app, const core::LanguageCatalog& langs)
@@ -382,14 +386,14 @@ void testSnapshots(GtkApplication* app, const core::LanguageCatalog& langs)
         CHECK(readText(f) == "on disk\n"); // the file itself was never touched
         // Saving makes it clean and drops its snapshot.
         const fs::path snap = w->activeBuffer()->snapshotPath;
-        activate(*w, "win.save");
+        activate(*w, IDM_FILE_SAVE);
         CHECK(!w->isModified(*w->activeBuffer()) && readText(f) == "on disk\nedited ");
         CHECK(!fs::exists(snap));
         // Closing the untitled one (answer No) deletes its snapshot.
-        activate(*w, "win.prev-tab");
+        activate(*w, IDM_VIEW_TAB_PREV);
         CHECK(w->activeBuffer()->isUntitled() && w->activeView()->text() == "unsaved draft");
         p.answers = {Answer::No};
-        activate(*w, "win.close");
+        activate(*w, IDM_FILE_CLOSE);
         CHECK(!fs::exists(untitledSnap));
     }
     // Without snapshots, quitting asks about unsaved documents.
@@ -420,7 +424,7 @@ void testExternalChanges(GtkApplication* app, const core::LanguageCatalog& langs
 
     // Our own save must not count as an outside change.
     typeText(*w, "x");
-    activate(*w, "win.save");
+    activate(*w, IDM_FILE_SAVE);
     w->activeView()->execute(SCI_GOTOPOS, 2);
     waitFor([] { return false; }, 300);
     CHECK(!b->externalChangePending);
@@ -467,7 +471,7 @@ void testBackupOnSave(GtkApplication* app, const core::LanguageCatalog& langs)
     writeText(f, "old");
     w->openFiles({f});
     typeText(*w, " new");
-    activate(*w, "win.save");
+    activate(*w, IDM_FILE_SAVE);
     CHECK(readText(f) == "old new");
     CHECK(readText(g_dir / "kept.txt.bak") == "old");
 

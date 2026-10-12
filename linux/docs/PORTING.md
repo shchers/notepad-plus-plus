@@ -142,15 +142,17 @@ flowchart TB
         BRX["boostregex/ (SCI_OWNREGEX)"]
         PUG["PowerEditor/src/pugixml"]
         UCD["PowerEditor/src/uchardet"]
-        DATA["langs.model.xml · stylers.model.xml · installer/themes"]
+        DATA["langs.model.xml · stylers.model.xml · installer/themes<br/>installer/nativeLang · bin/userDefineLangs"]
+        IDS["menuCmdID.h · resource.h · FindReplaceDlg_rc.h<br/>Parameters.cpp winKeyDefs · NppCommands.cpp"]
     end
     subgraph port["linux/src — the port"]
-        CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup<br/>Buffer · FileManager · Session · RecentFiles · NppConfig"]
+        CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup · UserLanguage<br/>Buffer · FileManager · Session · RecentFiles · NppConfig<br/>SearchEngine · FileSearch · EditOps · Shortcuts · Macro · Translator"]
         PLAT["platform/ — OS services<br/>Paths (XDG) · TextCodec (uchardet+iconv) · Settings<br/>FileIO (GIO) · FileMonitor (inotify)"]
-        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · FindBar"]
+        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator"]
         MAIN["main.cpp — CLI, single instance (D-Bus)"]
     end
     DATA --> CORE
+    IDS --> CORE
     PUG --> CORE
     UCD --> PLAT
     CORE --> UI
@@ -165,12 +167,15 @@ flowchart TB
 
 | Layer | Contains | Depends on | Windows equivalent |
 |---|---|---|---|
-| `core/` | Language and style catalogues, lexer keyword plans, buffers, load/save and backups, `session.xml`, recent files, `config.xml` import | pugixml, generated tables, `platform/` | parts of `Parameters`, `ScintillaEditView::set*Lexer`, `Buffer`/`FileManager`, `lastRecentFileList` |
+| `core/` | Language and style catalogues, lexer keyword plans, User Defined Languages, buffers, load/save and backups, `session.xml`, recent files, `config.xml` import; search engine and Find in Files, Edit menu operations, `shortcuts.xml` (keys, macros, Run commands), `nativeLang` | pugixml, generated tables, Scintilla's message API (`core::Sci`), `platform/` | parts of `Parameters`, `ScintillaEditView`, `Buffer`/`FileManager`, `lastRecentFileList`, the engine half of `FindReplaceDlg`, `Sorters`, `NativeLangSpeaker` |
 | `platform/` | Paths, encoding conversion, file I/O, file monitoring, settings storage | GLib/GIO, uchardet | `GetModuleFileName`, `%APPDATA%`, `MultiByteToWideChar`, `CreateFile`, `ReadDirectoryChangesW`, registry |
 | `ui/` | Widgets and windows | GTK, Scintilla GTK, core, platform | `WinControls/`, `Notepad_plus_Window` |
 
 `core/` must stay free of GTK and Win32 includes. That is what lets it later
-merge with upstream's own extracted model code (§6, Phase 1).
+merge with upstream's own extracted model code (§6, Phase 1). Core code that
+needs a Scintilla talks to it through `core::Sci`, a direct-function pointer
+pair (the `execute()` seam below), so the same search, Edit and macro code
+runs on a visible editor, on a hidden one (Find in Files) and in tests.
 
 ### Key mechanisms
 
@@ -192,13 +197,88 @@ keywords taken from C++), Objective-C, the hypertext family (HTML/PHP/ASP/JSP
 with embedded JavaScript, PHP and VBScript keyword sets) and XML. Tests
 assert the resulting Scintilla styles.
 
-**Search semantics**: Scintilla is built with `SCI_OWNREGEX` +
-`BoostRegexSearch`, the same engine as Windows. `FindBar` passes the same
-Notepad++-specific flags per operation as upstream `FindReplaceDlg`
-(`SCFIND_REGEXP_EMPTYMATCH_ALL` for Find Next, `…_NOTAFTERMATCH` for Replace
-All, `…_SKIPCRLFASONE`), so `^`, lookbehind and `\1` / `$1` substitutions
-behave identically. Boost's `format_all` replacement syntax is kept, so
-literal parentheses in a replacement are written `\(` `\)`, as on Windows.
+**Search semantics** (`core/SearchEngine`): Scintilla is built with
+`SCI_OWNREGEX` + `BoostRegexSearch`, the same engine as Windows. The engine
+passes the same Notepad++-specific flags per operation as upstream
+`FindReplaceDlg` (`SCFIND_REGEXP_EMPTYMATCH_ALL` for Find Next,
+`…_NOTAFTERMATCH` for Replace All / Count / Mark, `…_SKIPCRLFASONE`), uses
+upstream's scopes (direction, wrap, In selection) and Extended-mode escapes,
+so `^`, lookbehind, empty matches and `\1` / `$1` substitutions behave
+identically. Boost's `format_all` replacement syntax is kept, so literal
+parentheses in a replacement are written `\(` `\)`, as on Windows. The Find
+dialog, the incremental search bar, Style tokens, macros and Find in Files
+all use this one engine.
+
+**Find in Files** (`core/FileSearch`): upstream's filter syntax (`*.cpp *.h`,
+`!*.bak`, `!\dir`, `!+\dir` for all levels), hidden folders skipped unless
+asked, binary files skipped. Each file is searched in a hidden Scintilla
+document with the engine above; a file that is open is searched (or
+replaced) as it is in the editor, as upstream does. Replace in Files writes a
+file back in its own encoding and line endings, and only when something
+changed. Results go to the **search results panel** (`ui/SearchResults`), a
+read-only Scintilla coloured by Lexilla's `searchResult` lexer, with
+upstream's text format, newest search on top and older ones folded, so it
+looks like upstream's Finder and themes style it the same way.
+
+**Commands and menus** (`ui/Commands`): every menu command is keyed by its
+upstream ID from `menuCmdID.h` (compiled unmodified) and becomes a window
+action `win.id<ID>`. The menu bar follows upstream `Notepad_plus.rc`
+(`buildMenuBar`), labels come from `nativeLang` by the same IDs, and a
+command the port does not implement is left out of the menus rather than
+shown disabled. `cmake/GenerateCommandTables.cmake` extracts upstream's
+default shortcuts (`winKeyDefs[]` in `Parameters.cpp`, with virtual-key
+values from `keys.h`) and the list of commands macros record (from
+`NppCommands.cpp`) at configure time, like the language table. Commands are
+implemented in `ui/MainWindowCommands.cpp` (the GTK side of
+`NppCommands.cpp`); the Edit menu's text operations (case, sort, trim,
+tab/space, duplicates, comments, bookmarked lines, column insertion) are UI-free in
+`core/EditOps`, with upstream's line ranges, sort orders (natural integer
+sort, decimal sorts that put blank lines first) and undo grouping.
+
+**Keys, macros and Run commands** (`core/Shortcuts`, `core/Macro`):
+`shortcuts.xml` is read and written in upstream's format; customised menu
+keys apply on top of upstream's defaults, and the `PluginCommands` and
+`ScintillaKeys` sections are kept verbatim. Keys are Windows virtual-key
+codes in the file and become GTK accelerators through `ui/KeyMap`, so a
+`shortcuts.xml` copied from Windows works. Macros are recorded as upstream
+steps: Scintilla messages (`SCN_MACRORECORD`), menu commands by ID (type 2)
+and Find/Replace operations as upstream's sequence of type 3 steps
+(`IDC_FRCOMMAND_INIT` … `IDC_FRCOMMAND_EXEC`), so macros move between Windows
+and Linux unchanged; a recorded menu command is not recorded twice through
+the Scintilla messages it sends. Run commands expand upstream's variables
+(`$(FULL_CURRENT_PATH)`, `$(CURRENT_WORD)`, `$(SYS.<var>)` …) and start the
+program with `g_spawn`, or open documents and URLs with the desktop's
+handler, as `ShellExecute` does.
+
+**Localization** (`core/Translator`): upstream's `nativeLang/*.xml` load
+unmodified, on top of `english.xml` so a translation's gaps fall back to
+English. Menus, dialogs, status and message texts are looked up by upstream
+IDs and keys; `&` mnemonics become GTK `_` mnemonics. Switching language
+(Preferences ▸ General) rebuilds the menus at once, and right-to-left
+languages flip the window. As upstream, English uses the code's own
+texts where `english.xml` lacks plural forms (search results counts).
+
+**User Defined Languages** (`core/UserLanguage`): `userDefineLang.xml`,
+`userDefineLangs/*.xml` in the config folder and the shipped ones (the
+preinstalled Markdown) are read with upstream's parsing rules, old UDL
+versions included, and drive Lexilla's `user` lexer with exactly the
+properties and keyword lists `ScintillaEditView::setUserLexer` sends
+(quoted keywords encoded the same way). Language detection follows upstream
+order: a UDL's extensions (the dark or light variant matching the theme),
+then the Style Configurator's "User ext.", then the built-in languages.
+Sessions store a UDL by name, as upstream.
+
+**Dialogs**: Find/Replace, Shortcut Mapper, Preferences, Style
+Configurator, Run, Column Editor and Run a Macro Multiple Times are built
+in C++ rather than from GtkBuilder `.ui` files as first planned: every label
+comes from `nativeLang` by upstream control ID, so a `.ui` file would hold
+only layout, and code keeps one place to change per dialog. Preferences
+apply at once and Style Configurator edits preview live, as upstream; the
+Style Configurator saves into a copy of the file the styles came from
+(`stylers.xml` or the user's copy of a theme), so attributes the port does
+not model survive. Printing uses `GtkPrintOperation`, with Scintilla laying
+out pages into the print context's cairo surface (`SCI_FORMATRANGEFULL`), as
+upstream does with a printer DC.
 
 **Encodings** (`platform/TextCodec`): BOM detection (UTF-8, UTF-16 LE/BE) →
 UTF-8 validation → uchardet (with upstream's TIS-620 exclusion) → iconv via
@@ -277,30 +357,31 @@ on its own.
 | Views | ✅ two views side by side; Move / Clone to Other View, Switch to Other View (F8); clones share the document; an empty view hides; split position persisted |
 | Files | ✅ open (multi), save, save as, save all, reload (keeps positions), close all, close all but active, drag-and-drop, "new 1" replacement, unsaved-changes prompts, permissions-preserving atomic save (GIO), Edit ▸ Read-Only, Copy to Clipboard (path, name, dir) |
 | Sessions | ✅ last session restored at start and saved at exit (`session.xml`, upstream format, both views, positions, bookmarks, folds, language, encoding, read-only); File ▸ Load/Save Session |
-| Backup | ✅ session snapshot and periodic backup of unsaved documents (restored dirty, no exit prompt); backup on save (simple / verbose, custom directory via settings) |
+| Backup | ✅ session snapshot and periodic backup of unsaved documents (restored dirty, no exit prompt); backup on save (simple / verbose, custom directory); Preferences ▸ Backup |
 | Recent files | ✅ File menu history (closed files, max 10 or `config.xml` value), Restore Recent Closed File (Ctrl+Shift+T), Open All, Empty list; missing files offered for removal |
-| External change detection | ✅ `GFileMonitor`: ask to reload (with or without local changes), update silently, deleted-file prompt; Settings ▸ File Status Auto-Detection |
+| External change detection | ✅ `GFileMonitor`: ask to reload (with or without local changes), update silently, deleted-file prompt; Preferences ▸ MISC. ▸ File Status Auto-Detection |
 | Single instance | ✅ D-Bus (GApplication): files and switches go to the running window; `-multiInst`, `-nosession` |
 | Settings import | ✅ Windows `config.xml` (automatic on first run, or Settings ▸ Import) |
 | Command line | ✅ files, `-n<line>` `-c<col>` `-l<lang>` `-ro` `-multiInst` `-nosession`; other upstream switches accepted |
 | Syntax highlighting | ✅ all 95 upstream languages via Lexilla, upstream keyword lists and colours |
-| Themes | ✅ `stylers.model.xml` + all 22 upstream themes (Settings ▸ Theme), user `stylers.xml`; GTK chrome follows dark themes |
+| Themes | ✅ `stylers.model.xml` + all 22 upstream themes (Settings ▸ Theme, Style Configurator), user `stylers.xml`; GTK chrome follows dark themes |
 | Encodings | ✅ detect BOM / UTF-8 / legacy (uchardet); convert to UTF-8, UTF-8-BOM, UTF-16 LE/BE BOM |
 | Line endings | ✅ detect, convert (Windows / Unix / Mac) |
-| Search | ✅ find/replace bar: match case, whole word, Boost regex, wrap, Replace / Replace All (one undo step) |
-| Editing | ✅ folding (box tree), brace match, auto-indent, toggle line comment (Ctrl+Q), duplicate/delete/move lines, case conversion, multi-caret and column selection, bookmarks (Ctrl+F2/F2), go to line (Ctrl+G), zoom |
-| View | ✅ word wrap, show all characters, indent guides, status bar (language, length/lines, Ln/Col/Sel, EOL, encoding, INS/OVR) |
-| Settings | ✅ theme, view toggles, zoom, tab size / replace by spaces, auto-indent, backup and session options, auto-detection mode, window geometry persisted (`settings.ini`) |
+| Menus and keys | ✅ upstream menu layout and command IDs; upstream default shortcuts; `shortcuts.xml` (from Windows too); Shortcut Mapper (main menu, macros, Run commands; filter, conflicts) |
+| Search | ✅ Find / Replace / Find in Files / Mark dialog: Normal, Extended and Boost regex modes, match case, whole word, wrap, backward, in selection, `. matches newline`; Find Next/Previous (F3), Count, Replace, Replace All (one undo step), Replace All in All Opened Documents, Find All in current / all open documents, Find in Files and Replace in Files (filters, sub-folders, hidden folders), Mark All with bookmarks, Copy Marked Text; history kept; Select and Find Next (Ctrl+F3), volatile Find; search results panel (F7, F4/Shift+F4); incremental search bar (Ctrl+Alt+I) with highlight all; Style All Occurrences / One Token (5 styles), jump between them, copy styled text; Go to matching brace, select between braces |
+| Editing | ✅ folding (5 margin styles, fold all / current / by level), brace match, auto-indent, comments (line toggle/add/remove, block), duplicate/move lines, Line Operations (sort 14 ways incl. locale and column sort, remove duplicates, empty lines, join, split, insert blank line), Convert Case (8 modes), Blank Operations (trim, EOL to space, TAB ↔ space), multi-select all/next/undo/skip, Begin/End Select, Column Editor, multi-caret and column selection, bookmarks and bookmarked-line operations, insert date/time, open/search selected text, MD5/SHA hashes of the selection, read-only for all documents, go to line (Ctrl+G), zoom |
+| Macros and Run | ✅ record, play back, save (with a shortcut), run multiple times or to the end of the file, saved macros menu; Run dialog with upstream variables, saved Run commands with shortcuts — all in `shortcuts.xml`, compatible with Windows |
+| View | ✅ word wrap, show spaces / EOL / all characters, indent guides, wrap symbol, always on top, full screen, Post-it, tab commands (1st–9th, next/previous, move), Summary, status bar (language, length/lines, Ln/Col/Sel, EOL, encoding, INS/OVR) |
+| Settings | ✅ Preferences (General: localization, toolbar, status bar; Editing; Margins/Border/Edge; New Document; Indentation; Recent Files History; Backup; MISC. auto-detection), Style Configurator (live preview, themes, user keywords and extensions), theme menu, import of themes and `config.xml`; persisted in `settings.ini` |
+| Localization | ✅ all upstream `nativeLang` translations, switched live; right-to-left languages |
+| User Defined Languages | ✅ upstream UDL files (bundled Markdown, the user's `userDefineLang.xml` / `userDefineLangs/`), Language menu, detection by extension, sessions |
+| Printing | ✅ Print (GTK dialog, settings kept), Print Now; selection only when there is one; header and page footer |
 | Packaging | ✅ CPack `.deb`, debhelper source package, Docker build/runtime, desktop file, icons, man page |
 | Dragging tabs between views, tab pinning/colours, renaming untitled tabs | ❌ later (session attributes are already kept) |
-| Find in Files, Mark, Count, results panel | ❌ Phase 3 |
-| Macros, Run menu, shortcut mapper | ❌ Phase 3 |
+| UDL editor ("Define your language…"), Find Characters in Range, Hide Lines, synchronized scrolling, Monitoring (tail -f), text direction | ❌ later (see Phase 3 "left for later") |
+| Encoding ▸ ANSI | ➖ left out: "ANSI" is the system code page, UTF-8 on Linux, where upstream does nothing for it; Character Set covers legacy encodings |
 | Auto-completion, call tips, smart highlighting, tag matching | ❌ Phase 1 (code is portable) |
-| User Defined Languages | ❌ Phase 3 (lexer already compiled in) |
 | Docking panels (Function List, Folder as Workspace, Document Map, Doc List, Char panel, Clipboard History, Project) | ❌ Phase 4 |
-| Preferences, Style Configurator dialogs | ❌ Phase 3 |
-| Localization (`nativeLang`) | ❌ Phase 3 |
-| Printing | ❌ Phase 3 (`GtkPrintOperation` + `SCI_FORMATRANGE`) |
 | Plugins | ❌ Phase 5 (§7) |
 
 ---
@@ -311,17 +392,25 @@ on its own.
 |---|---|---|
 | `winmain.cpp` | `src/main.cpp` | CLI parsing compatible with upstream switches; single instance through D-Bus instead of `FindWindow` + `WM_COPYDATA` |
 | `Notepad_plus_Window.*` | `ui/MainWindow` | |
-| `Notepad_plus.*`, `NppCommands.cpp`, `NppBigSwitch.cpp` | `ui/MainWindow` commands → later `core/Commands` | menu command IDs from `menuCmdID.h` become GAction names; keep IDs for `shortcuts.xml`/macro compatibility |
+| `Notepad_plus.*`, `NppCommands.cpp`, `NppBigSwitch.cpp` | `ui/MainWindowCommands.cpp`, `ui/MainWindowMacros.cpp`, `ui/Commands` (table, menus) + `core/EditOps` | command IDs from `menuCmdID.h` are the action names (`win.id<ID>`), so `shortcuts.xml`, macros and `nativeLang` share them with Windows |
+| `Notepad_plus.rc` (menus) | `ui/Commands.cpp` `mainMenu()` | same order and submenus; labels from `nativeLang` |
+| `Notepad_plus.cpp` (`doTrim`, `removeEmptyLine`, `removeDuplicateLines`, marked lines, `wsTabConvert`), `ScintillaEditView` (`changeCase`, `sortLines`, `columnReplace`), `MISC/Common/Sorters.h` | `core/EditOps` | UI-free, one undo step each |
 | `NppIO.cpp` | `ui/MainWindowDocs.cpp` (`openFiles`, `save`, `closeTab`, `loadSession`, `requestQuit`) + `core/FileManager` | |
 | `ScintillaComponent/ScintillaEditView.*` | `ui/EditorView` + `core/LexerSetup` | `execute()` seam kept; `position()`/`restorePosition()` mirror upstream `Position` |
 | `ScintillaComponent/Buffer.*` | `core/Buffer` + `core/FileManager` | widget per tab; clones share the Scintilla document via `SCI_SETDOCPOINTER` |
 | `Notepad_plus.cpp` (`loadSession`, `getCurrentOpenedFiles`, `docGotoAnotherEditView`, `checkModifiedDocument`) | `ui/MainWindowDocs.cpp` | |
 | `MISC/Common/lastRecentFileList`, `Parameters` (History) | `core/RecentFiles` | upstream semantics: closed files enter, opened files leave |
-| `ScintillaComponent/FindReplaceDlg.*` | `ui/FindBar` (engine functions) | dialog features in Phase 3 |
+| `ScintillaComponent/FindReplaceDlg.*` (`FindReplaceDlg`, `Finder`, `FindIncrementDlg`) | `core/SearchEngine`, `core/FileSearch`, `ui/FindDialog`, `ui/SearchResults`, `ui/FindBar` | engine and dialog split; macro steps as upstream |
+| `ScintillaComponent/columnEditor.*` | `ui/MainWindowDialogs.cpp` + `core/EditOps` | |
+| `ScintillaComponent/Printer.*` | `ui/MainWindowPrint.cpp` | `GtkPrintOperation` |
+| `ScintillaComponent/UserDefineDialog.*` (`GlobalMappers`), `Parameters` (`feedUserLang`) | `core/UserLanguage` | the editor dialog is left for later |
+| `WinControls/Grid/ShortcutMapper.*`, `WinControls/shortcut/*` | `ui/MainWindowDialogs.cpp`, `ui/ShortcutDialog`, `core/Shortcuts`, `core/KeyCombo`, `ui/KeyMap` | |
+| `WinControls/ColourPicker/WordStyleDlg.*` | `ui/MainWindowDialogs.cpp` (Style Configurator) + `core/StyleCatalog::save` | |
+| `WinControls/StaticDialog/RunDlg/*` | `ui/MainWindowMacros.cpp` | |
+| `localization.*` (`NativeLangSpeaker`) | `core/Translator` | |
 | `ScintillaComponent/AutoCompletion.*`, `FunctionCallTip.*` | Phase 1: compile into `core/` | reads `autoCompletion/*.xml` |
 | `ScintillaComponent/SmartHighlighter.*`, `xmlMatchedTagsHighlighter.*` | Phase 1: compile into `core/` | `execute()` only |
-| `ScintillaComponent/UserDefineDialog.*` | Phase 3 | `LexUser.cxx` already builds (empty `windows.h` shim) |
-| `Parameters.*` | `core/*Catalog`, `core/Session` (`session.xml`), `core/NppConfig` (`config.xml` import), `platform/Settings` | `shortcuts.xml` in Phase 3 |
+| `Parameters.*` | `core/*Catalog`, `core/Session` (`session.xml`), `core/NppConfig` (`config.xml` import), `core/Shortcuts` (`shortcuts.xml`), `platform/Settings` | default keys and macro-recordable commands generated from `Parameters.cpp` / `NppCommands.cpp` |
 | `Utf8_16.*`, `EncodingMapper.*` | `platform/TextCodec` | |
 | `MISC/Common/*` | `platform/` | paths, string conversion, file helpers |
 | `WinControls/TabBar` | `GtkNotebook` | |
@@ -330,8 +419,7 @@ on its own.
 | `WinControls/OpenSaveFileDialog` | `GtkFileChooserNative` | portal-aware (Flatpak/Snap-ready) |
 | `WinControls/ReadDirectoryChanges` | `platform/FileMonitor` (`GFileMonitor`, inotify) | |
 | `WinControls/DockingWnd` | Phase 4: dock manager | see §2.2 |
-| `WinControls/Preference` | Phase 3: GtkBuilder dialog | biggest single dialog (8.4 k lines) |
-| `WinControls/shortcut` | Phase 3: accel map from `shortcuts.xml` | |
+| `WinControls/Preference` | `ui/MainWindowDialogs.cpp` (`cmdPreferences`) | the pages for settings the port has |
 | `MISC/PluginsManager` | Phase 5 | new ABI, §7 |
 | `NppDarkMode`, `DarkMode/` | not ported | GTK theme + `gtk-application-prefer-dark-theme` |
 | `MISC/RegExt` (file associations) | `.desktop` `MimeType=` | handled by packaging |
@@ -372,12 +460,22 @@ option, and reloading with a chosen encoding (Encoding ▸ Character sets);
 the Backup and Auto-Detection options move into the Preferences dialog in
 Phase 3.
 
-**Phase 3 — dialogs.** Find/Replace dialog (Find in Files with GIO, Mark,
-Count, results panel), Preferences, Style Configurator, Shortcut Mapper
-(`shortcuts.xml`), macros (`SCI_STARTRECORD`, stored in `shortcuts.xml`),
-Run, Column Editor, UDL dialog, `nativeLang` localization, printing. Build
-dialogs with GtkBuilder `.ui` files, so the layout can be edited without
-code changes.
+**Phase 3 — dialogs (done).** Menus and keys by upstream command ID
+(generated default keys, `shortcuts.xml`, Shortcut Mapper), the Edit menu
+operations, Find / Replace / Find in Files / Mark with the search results
+panel and incremental search, macros and Run commands (upstream formats),
+Preferences, Style Configurator, Column Editor, User Defined Languages
+(loading and highlighting), `nativeLang` localization and printing. See §3
+"Key mechanisms". The dialogs are built in C++ instead of GtkBuilder (§3,
+"Dialogs"). Left for later: the UDL editor dialog (and UDL import/export),
+the Shortcut Mapper's Scintilla-commands tab (the keys are kept in
+`shortcuts.xml`), Preferences pages for settings the port does not have yet
+(Tab Bar, Dark Mode, Searching, Highlighting, Print header/footer layout,
+Delimiter, Performance, Default Directory, Multi-Instance & Date, Search
+Engine), Find dialog transparency and Find in Projects, Find Characters in
+Range, Hide Lines, synchronized scrolling, Monitoring, text direction,
+`shortcuts.xml` integrity check for Run commands (upstream keeps an HMAC in
+`config.xml`), and the MD5/SHA "from files" dialogs.
 
 **Phase 4 — panels.** Decide on docking (§2.2), then Function List (upstream
 parser + `functionList/*.xml`), Folder as Workspace, Document List, Document
@@ -471,6 +569,25 @@ one-line upstream PR:
   removed on save/close, exit prompts without snapshots, outside changes
   (own saves ignored, reload keeps the caret, decline, silent update,
   deleted file), and legacy code pages kept across sessions.
+- `search_shortcuts_i18n`: the search engine (modes, scopes, count, mark,
+  find all, empty matches, Extended escapes), Find in Files (filters,
+  folders, binary files, replace keeping encodings), `shortcuts.xml` round
+  trip with upstream's macro newline normalisation, command tables, every
+  `nativeLang` file and fallbacks, the Edit operations (case, the sort
+  kinds, trim, TAB/space, empty and duplicate lines, join, comments,
+  bookmarked lines), column insertion, Style Configurator saving, and UDL
+  parsing (current and pre-2.0 formats, keyword encoding).
+- `dialogs_and_commands`: a live `MainWindow`: commands by upstream ID and
+  their check states, read-only protection, Style tokens, tab commands,
+  printing to PDF (pages, selection); Find dialog operations, status texts,
+  the results panel text and F4 navigation, Find/Replace in Files with an
+  open modified document, macro playback of saved search steps, incremental
+  search; macro recording (typing, menu commands, searches, no double
+  recording), playback, until end of file, saving to `shortcuts.xml` and
+  shortcuts for saved macros; Run variables and commands; UDL detection and
+  highlighting (Markdown), Language menu, sessions; Preferences effects
+  (new document defaults, margins, edge); localization switching and
+  `shortcuts.xml` keys over the defaults.
 - `app_launch`: starts the real application (`-multiInst`) with a file and
   `-n3`, then exits after 1.5 s through the normal exit path.
 - `single_instance`: on a private bus from `dbus-run-session`, a second

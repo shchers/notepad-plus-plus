@@ -18,7 +18,8 @@ struct LoadedFile {
 };
 
 // Reads and decodes a file. `codepage` forces a Windows code page (as stored
-// in session.xml); -1 detects. A missing file loads as empty text with a
+// in session.xml, or 65001 / 1200 / 1201 for UTF-8 / UTF-16 LE / BE); -1
+// detects. A missing file loads as empty text with a
 // stamp whose `exists` is false.
 std::optional<LoadedFile> loadFile(const std::filesystem::path& p, int codepage, std::string* error);
 

@@ -12,7 +12,15 @@ add_library(nppgtk_core STATIC
   platform/Paths.cpp
   platform/Settings.cpp
   platform/TextCodec.cpp
+  core/EditOps.cpp
   core/FileManager.cpp
+  core/FileSearch.cpp
+  core/KeyCombo.cpp
+  core/Macro.cpp
+  core/SearchEngine.cpp
+  core/Shortcuts.cpp
+  core/Translator.cpp
+  core/UserLanguage.cpp
   core/LanguageCatalog.cpp
   core/LexerSetup.cpp
   core/NppConfig.cpp
@@ -20,13 +28,24 @@ add_library(nppgtk_core STATIC
   core/Session.cpp
   core/StyleCatalog.cpp
   ui/EditorView.cpp
+  ui/Commands.cpp
   ui/FindBar.cpp
+  ui/FindDialog.cpp
+  ui/KeyMap.cpp
   ui/MainWindow.cpp
+  ui/MainWindowCommands.cpp
+  ui/MainWindowDialogs.cpp
+  ui/MainWindowMacros.cpp
+  ui/MainWindowPrint.cpp
   ui/MainWindowDocs.cpp
+  ui/SearchResults.cpp
+  ui/ShortcutDialog.cpp
 )
 target_include_directories(nppgtk_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${NPP_GENERATED_DIR}")
+  "${NPP_GENERATED_DIR}"
+  "${NPP_SRC}"                       # upstream ID headers: menuCmdID.h, resource.h
+  "${NPP_SRC}/ScintillaComponent")  # FindReplaceDlg_rc.h
 target_compile_definitions(nppgtk_core PUBLIC
   NPP_VERSION="${NPP_VERSION}"
   NPP_APP_ID="${NPP_APP_ID}"
@@ -52,6 +71,8 @@ add_custom_target(nppgtk_data ALL
   COMMAND ${CMAKE_COMMAND} -E make_directory "${NPP_BUILD_DATA_DIR}"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_data_files} "${NPP_BUILD_DATA_DIR}/"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/themes" "${NPP_BUILD_DATA_DIR}/themes"
-  COMMENT "Staging Notepad++ language and style definitions"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/nativeLang" "${NPP_BUILD_DATA_DIR}/nativeLang"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/bin/userDefineLangs" "${NPP_BUILD_DATA_DIR}/userDefineLangs"
+  COMMENT "Staging Notepad++ language, style, localization and UDL definitions"
   VERBATIM)
 add_dependencies(${NPP_EXE_NAME} nppgtk_data)

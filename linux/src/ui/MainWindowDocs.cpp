@@ -49,8 +49,7 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
     EditorView& v = *t->view;
     if (cloneOf) // share the Scintilla document, like upstream SCI_SETDOCPOINTER
         v.execute(SCI_SETDOCPOINTER, 0, cloneOf->view->execute(SCI_GETDOCPOINTER));
-    if (t->buf->language)
-        v.applyLanguage(*t->buf->language, langs_, styles_);
+    applyBufferLanguage(v, *t->buf);
     applyViewSettings(v);
     if (cloneOf)
         v.restorePosition(cloneOf->view->position());
@@ -76,6 +75,9 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
         }
     };
     v.onUriDropped = [this](std::string_view uris) { openUriList(uris); };
+    v.onMacroRecord = [this](int msg, uptr_t w, sptr_t l) { recordScintilla(msg, w, l); };
+    if (recording_)
+        v.execute(SCI_STARTRECORD);
 
     tabs_.push_back(std::move(owned));
     gtk_widget_show(v.widget());
@@ -169,6 +171,8 @@ void MainWindow::releaseBuffer(core::Buffer& b)
 
 MainWindow::Tab* MainWindow::currentTabOf(int viewIdx) const
 {
+    if (!notebooks_[viewIdx]) // still constructing
+        return nullptr;
     GtkNotebook* nb = GTK_NOTEBOOK(notebooks_[viewIdx]);
     const int page = gtk_notebook_get_current_page(nb);
     return page < 0 ? nullptr : tabForPage(gtk_notebook_get_nth_page(nb, page));
@@ -300,8 +304,14 @@ void MainWindow::newDocument()
 {
     auto buf = std::make_shared<core::Buffer>();
     buf->untitledName = nextUntitledName();
-    buf->language = &langs_.plainText();
+    // Preferences > New Document: language, encoding and line ending.
+    const core::Language* lang = settings_.newDocLanguage.empty() ? nullptr : langs_.byName(settings_.newDocLanguage);
+    buf->language = lang ? lang : &langs_.plainText();
+    static const platform::TextEncoding kEnc[] = {{"UTF-8", platform::Bom::None}, {"UTF-8", platform::Bom::Utf8},
+                                                  {"UTF-16BE", platform::Bom::Utf16BE}, {"UTF-16LE", platform::Bom::Utf16LE}};
+    buf->encoding = kEnc[std::clamp(settings_.newDocEncoding, 0, 3)];
     Tab* t = addTab(std::move(buf), activeView_);
+    t->view->setEolMode(std::clamp(settings_.newDocEol, 0, 2), false);
     activateTab(*t);
 }
 
@@ -371,7 +381,7 @@ void MainWindow::applyLoaded(Tab& t, const fs::path& p, core::LoadedFile&& lf)
     if (b.userReadOnly)
         v.execute(SCI_SETREADONLY, 1);
     if (!p.empty()) {
-        setLanguage(b, langs_.forFile(p));
+        detectLanguage(b, p);
         lastDir_ = p.parent_path();
         recent_.remove(p.string());
         refreshRecentMenu();
@@ -419,12 +429,12 @@ int MainWindow::openFiles(const std::vector<fs::path>& files, const OpenOptions&
     return opened;
 }
 
-bool MainWindow::reloadBuffer(core::Buffer& b, std::string* error)
+bool MainWindow::reloadBuffer(core::Buffer& b, std::string* error, int codepage)
 {
     const std::vector<Tab*> tabs = tabsOf(b);
     if (tabs.empty() || b.isUntitled())
         return false;
-    auto lf = core::loadFile(b.path, -1, error);
+    auto lf = core::loadFile(b.path, codepage, error);
     if (!lf)
         return false;
     std::vector<ViewPosition> positions;
@@ -442,9 +452,68 @@ bool MainWindow::reloadBuffer(core::Buffer& b, std::string* error)
     return true;
 }
 
+void MainWindow::applyBufferLanguage(EditorView& v, const core::Buffer& b)
+{
+    if (b.userLanguage) {
+        const long id = static_cast<long>(b.userLanguage - udls_.data()) + 1;
+        v.applyUserLanguage(*b.userLanguage, styles_, id);
+    } else if (b.language) {
+        v.applyLanguage(*b.language, langs_, styles_);
+    }
+}
+
+void MainWindow::setUserLanguage(core::Buffer& b, const core::UserLanguage& udl)
+{
+    b.language = &langs_.plainText();
+    b.userLanguage = &udl;
+    for (Tab* t : tabsOf(b)) {
+        applyBufferLanguage(*t->view, b);
+        applyViewSettings(*t->view);
+    }
+    if (activeBuffer() == &b) {
+        syncActionStates();
+        refreshStatus();
+    }
+}
+
+void MainWindow::reapplyLanguage(core::Buffer& b)
+{
+    if (b.userLanguage)
+        setUserLanguage(b, *b.userLanguage);
+    else if (b.language)
+        setLanguage(b, *b.language);
+}
+
+void MainWindow::detectLanguage(core::Buffer& b, const fs::path& p)
+{
+    const std::string ext = p.extension().string();
+    // A UDL first; with light and dark variants for the same extension, the
+    // one that suits the theme (upstream getUserDefinedLangNameFromExt).
+    const core::UserLanguage* found = nullptr;
+    for (const core::UserLanguage& u : udls_)
+        if (u.matchesExtension(ext) && (!found || (u.darkModeTheme == darkTheme_ && found->darkModeTheme != darkTheme_)))
+            found = &u;
+    if (found) {
+        setUserLanguage(b, *found);
+        return;
+    }
+    for (const core::StyleCatalog::LexerInfo& l : styles_.lexers()) {
+        if (l.ext.empty() || ext.size() < 2)
+            continue;
+        const std::string list = " " + l.ext + " ";
+        if (list.find(" " + ext.substr(1) + " ") != std::string::npos)
+            if (const core::Language* lang = langs_.byName(l.name)) {
+                setLanguage(b, *lang);
+                return;
+            }
+    }
+    setLanguage(b, langs_.forFile(p));
+}
+
 void MainWindow::setLanguage(core::Buffer& b, const core::Language& lang)
 {
     b.language = &lang;
+    b.userLanguage = nullptr;
     for (Tab* t : tabsOf(b)) {
         t->view->applyLanguage(lang, langs_, styles_);
         applyViewSettings(*t->view);
@@ -540,8 +609,8 @@ bool MainWindow::save(core::Buffer& b, bool saveAs)
         refreshRecentMenu();
     }
     // Upstream re-detects the language when an untitled/plain doc gets a name.
-    if ((wasUntitled || nameChanged) && (!b.language || b.language->isPlainText()))
-        setLanguage(b, langs_.forFile(target));
+    if ((wasUntitled || nameChanged) && !b.userLanguage && (!b.language || b.language->isPlainText()))
+        detectLanguage(b, target);
     refreshBufferTabs(b);
     refreshAll();
     return true;
@@ -571,6 +640,21 @@ bool MainWindow::closeTab(Tab& t, bool keepOne)
         newDocument(); // upstream always keeps one document open
     refreshAll();
     return true;
+}
+
+void MainWindow::closeTabsWhere(const std::function<bool(Tab& t, int index, int activeIndex)>& pick)
+{
+    Tab* active = activeTab();
+    if (!active)
+        return;
+    const std::vector<Tab*> tabs = tabsInOrder(active->viewIdx);
+    const int activeIndex = static_cast<int>(std::find(tabs.begin(), tabs.end(), active) - tabs.begin());
+    for (int i = static_cast<int>(tabs.size()) - 1; i >= 0; --i)
+        if (tabs[i] != active && pick(*tabs[i], i, activeIndex) && !closeTab(*tabs[i], false))
+            break;
+    if (tabs_.empty())
+        newDocument();
+    refreshAll();
 }
 
 bool MainWindow::closeAll()
@@ -698,7 +782,7 @@ core::Session MainWindow::currentSession() const
                 continue; // nothing to restore it from
             core::SessionFile f;
             f.filename = b.fullName();
-            f.lang = b.language ? b.language->shortName : langs_.plainText().shortName;
+            f.lang = b.userLanguage ? b.userLanguage->name : b.language ? b.language->shortName : langs_.plainText().shortName;
             f.encoding = b.encoding.bom == platform::Bom::None ? platform::codepageForCharset(b.encoding.charset) : -1;
             f.userReadOnly = b.userReadOnly;
             if (withSnapshot)
@@ -807,8 +891,15 @@ MainWindow::Tab* MainWindow::openSessionFile(const core::SessionFile& f, int vie
             }
         }
     }
-    const core::Language* lang = langs_.byAnyName(f.lang);
-    setLanguage(b, lang ? *lang : (untitled ? langs_.plainText() : langs_.forFile(b.path)));
+    if (const core::UserLanguage* u = userLanguage(f.lang)) {
+        setUserLanguage(b, *u);
+    } else if (const core::Language* lang = langs_.byAnyName(f.lang)) {
+        setLanguage(b, *lang);
+    } else if (untitled) {
+        setLanguage(b, langs_.plainText());
+    } else {
+        detectLanguage(b, b.path);
+    }
     std::vector<sptr_t> marks(f.marks.begin(), f.marks.end());
     std::vector<sptr_t> folds(f.folds.begin(), f.folds.end());
     t->view->setBookmarks(marks);

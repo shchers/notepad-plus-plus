@@ -21,7 +21,13 @@ std::optional<LoadedFile> loadFile(const fs::path& p, int codepage, std::string*
     std::string raw;
     if (out.stamp.exists && !platform::readFile(p, raw, error))
         return std::nullopt;
-    if (const std::string cs = platform::charsetForCodepage(codepage); !cs.empty()) {
+    // Windows' Unicode code pages (Encoding > UTF-8 / UTF-16 on a legacy
+    // document) besides the legacy ones session.xml stores.
+    const std::string cs = codepage == 65001 ? "UTF-8"
+                         : codepage == 1200  ? "UTF-16LE"
+                         : codepage == 1201  ? "UTF-16BE"
+                                             : platform::charsetForCodepage(codepage);
+    if (!cs.empty()) {
         if (auto d = platform::decodeAs(raw, cs, nullptr)) {
             out.text = std::move(*d);
             return out;

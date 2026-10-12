@@ -1,0 +1,559 @@
+// Phase 3 UI tests on a live MainWindow: menu commands by upstream ID,
+// Find / Replace / Find in Files / Mark through FindDialog, the search
+// results panel, macro steps in upstream's format, nativeLang switching and
+// shortcuts.xml.
+
+#include "core/LanguageCatalog.h"
+#include "platform/FileIO.h"
+#include "platform/Paths.h"
+#include "ui/MainWindow.h"
+
+#include "FindReplaceDlg_rc.h"
+#include "menuCmdID.h"
+
+#include <gtk/gtk.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <string>
+
+namespace fs = std::filesystem;
+using namespace npp;
+using Answer = ui::MainWindow::Answer;
+
+static int g_failures = 0;
+static int g_checks = 0;
+
+#define CHECK(cond)                                                                 \
+    do {                                                                            \
+        ++g_checks;                                                                 \
+        if (!(cond)) {                                                              \
+            ++g_failures;                                                           \
+            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
+        }                                                                           \
+    } while (0)
+
+namespace {
+
+fs::path g_dir;
+
+void writeText(const fs::path& p, const std::string& s)
+{
+    fs::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << s;
+}
+
+std::string readText(const fs::path& p)
+{
+    std::string s;
+    platform::readFile(p, s, nullptr);
+    return s;
+}
+
+void pump()
+{
+    while (g_main_context_iteration(nullptr, FALSE)) {
+    }
+}
+
+struct Prompter {
+    std::deque<Answer> answers;
+    std::vector<std::string> asked;
+    ui::MainWindow::PromptHandler handler()
+    {
+        return [this](const std::string& primary, const std::string&, bool) {
+            asked.push_back(primary);
+            if (answers.empty())
+                return Answer::No;
+            const Answer a = answers.front();
+            answers.pop_front();
+            return a;
+        };
+    }
+};
+
+std::unique_ptr<ui::MainWindow> makeWindow(GtkApplication* app, core::LanguageCatalog& langs, Prompter& p)
+{
+    auto w = std::make_unique<ui::MainWindow>(app, langs, false);
+    w->setPromptHandler(p.handler());
+    w->present();
+    pump();
+    return w;
+}
+
+void setSel(ui::EditorView& v, sptr_t a, sptr_t b)
+{
+    v.execute(SCI_SETSEL, static_cast<uptr_t>(a), b);
+}
+
+void testEditCommands(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    w->newDocument();
+    ui::EditorView& v = *w->activeView();
+
+    // Commands exist for upstream IDs, toggles report their state.
+    for (int id : {IDM_FILE_NEW, IDM_EDIT_UPPERCASE, IDM_EDIT_SORTLINES_INTEGER_ASCENDING, IDM_SEARCH_FIND, IDM_SEARCH_MARK,
+                   IDM_VIEW_WRAP, IDM_FORMAT_CONV2_UTF_8, IDM_FORMAT_WIN_1252, IDM_MACRO_STARTRECORDINGMACRO})
+        CHECK(w->hasCommand(id) || id == IDM_MACRO_STARTRECORDINGMACRO);
+    const bool wrap = w->commandChecked(IDM_VIEW_WRAP);
+    CHECK(w->runCommand(IDM_VIEW_WRAP));
+    CHECK(w->commandChecked(IDM_VIEW_WRAP) != wrap);
+    CHECK((v.execute(SCI_GETWRAPMODE) != SC_WRAP_NONE) != wrap);
+    w->runCommand(IDM_VIEW_WRAP);
+
+    v.setText("banana\napple\ncherry\n");
+    CHECK(w->runCommand(IDM_EDIT_SORTLINES_LEXICOGRAPHIC_ASCENDING));
+    CHECK(v.text() == "\napple\nbanana\ncherry");
+    setSel(v, 1, 6);
+    CHECK(w->runCommand(IDM_EDIT_UPPERCASE));
+    CHECK(v.text() == "\nAPPLE\nbanana\ncherry");
+    CHECK(w->runCommand(IDM_EDIT_UNDO));
+    CHECK(v.text() == "\napple\nbanana\ncherry");
+
+    CHECK(w->runCommand(IDM_FORMAT_TODOS));
+    CHECK(v.execute(SCI_GETEOLMODE) == SC_EOL_CRLF && v.text() == "\r\napple\r\nbanana\r\ncherry");
+    CHECK(w->commandChecked(IDM_FORMAT_TODOS) && !w->commandChecked(IDM_FORMAT_TOUNIX));
+    CHECK(w->runCommand(IDM_FORMAT_TOUNIX));
+
+    // Encoding > Character Set and UTF-8 read the file again in that encoding.
+    {
+        const fs::path enc = g_dir / "enc.txt";
+        writeText(enc, "caf\xC3\xA9\n");
+        CHECK(w->openFiles({enc}) == 1);
+        ui::EditorView& ev = *w->activeView();
+        CHECK(ev.text() == "caf\xC3\xA9\n" && w->commandChecked(IDM_FORMAT_AS_UTF_8));
+        CHECK(w->runCommand(IDM_FORMAT_WIN_1252));
+        CHECK(ev.text() == "caf\xC3\x83\xC2\xA9\n"); // "cafÃ©"
+        CHECK(w->commandChecked(IDM_FORMAT_WIN_1252) && !w->commandChecked(IDM_FORMAT_AS_UTF_8));
+        CHECK(!w->isModified(*w->activeBuffer()));
+        CHECK(w->runCommand(IDM_FORMAT_AS_UTF_8));
+        CHECK(ev.text() == "caf\xC3\xA9\n" && w->commandChecked(IDM_FORMAT_AS_UTF_8));
+        // Convert to: the text stays, the bytes on disk change on save.
+        CHECK(w->runCommand(IDM_FORMAT_CONV2_UTF_16LE));
+        CHECK(w->isModified(*w->activeBuffer()) && w->commandChecked(IDM_FORMAT_UTF_16LE));
+        CHECK(w->runCommand(IDM_FILE_SAVE));
+        CHECK(readText(enc) == std::string("\xFF\xFE" "c\0a\0f\0\xE9\0\n\0", 12));
+        CHECK(w->runCommand(IDM_FILE_CLOSE));
+    }
+
+    // Comments follow the document's language.
+    const fs::path cpp = g_dir / "c.cpp";
+    writeText(cpp, "int a;\nint b;\n");
+    CHECK(w->openFiles({cpp}) == 1);
+    ui::EditorView& c = *w->activeView();
+    setSel(c, 0, c.length());
+    CHECK(w->runCommand(IDM_EDIT_BLOCK_COMMENT));
+    CHECK(c.text() == "// int a;\n// int b;\n");
+    CHECK(w->runCommand(IDM_EDIT_BLOCK_UNCOMMENT));
+    CHECK(c.text() == "int a;\nint b;\n");
+
+    // Read-only documents are not edited by Edit operations.
+    CHECK(w->runCommand(IDM_EDIT_TOGGLEREADONLY));
+    setSel(c, 0, 3);
+    w->runCommand(IDM_EDIT_UPPERCASE);
+    CHECK(c.text() == "int a;\nint b;\n");
+    CHECK(w->runCommand(IDM_EDIT_TOGGLEREADONLY));
+
+    // Bookmarks and Style tokens.
+    c.execute(SCI_GOTOLINE, 1);
+    CHECK(w->runCommand(IDM_SEARCH_TOGGLE_BOOKMARK));
+    CHECK(w->runCommand(IDM_SEARCH_INVERSEMARKS));
+    CHECK(c.execute(SCI_MARKERNEXT, 0, 1 << 24) == 0);
+    c.execute(SCI_GOTOPOS, 1); // inside "int"
+    CHECK(w->runCommand(IDM_SEARCH_MARKALLEXT1));
+    const int ind = core::markStyleIndicator(1);
+    CHECK(c.execute(SCI_INDICATORVALUEAT, ind, 0) && c.execute(SCI_INDICATORVALUEAT, ind, 7));
+    CHECK(w->runCommand(IDM_SEARCH_CLEARALLMARKS));
+    CHECK(!c.execute(SCI_INDICATORVALUEAT, ind, 0));
+
+    // Printing: exported to PDF, one page per screenful of lines and more.
+    {
+        std::string text;
+        for (int i = 0; i < 200; ++i)
+            text += "line " + std::to_string(i) + "\n";
+        c.setText(text);
+        const fs::path pdf = g_dir / "print.pdf";
+        std::string err;
+        int pages = 0;
+        CHECK(w->print(false, pdf, &err, &pages));
+        CHECK(readText(pdf).rfind("%PDF", 0) == 0);
+        CHECK(pages >= 3);
+        // The selection only: one page.
+        c.execute(SCI_SETSEL, 0, 20);
+        CHECK(w->print(false, pdf, &err, &pages) && pages == 1);
+        c.setText("int a;\nint b;\n");
+    }
+
+    // Tab commands.
+    CHECK(w->runCommand(IDM_VIEW_TAB1));
+    CHECK(w->activeBuffer()->isUntitled());
+    CHECK(w->runCommand(IDM_VIEW_TAB_END));
+    CHECK(w->activeBuffer()->path == cpp);
+    p.answers = {Answer::No};
+    CHECK(w->runCommand(IDM_FILE_CLOSEALL_BUT_CURRENT));
+    CHECK(w->documentCount() == 1 && w->activeBuffer()->path == cpp);
+}
+
+void testFindDialog(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    const fs::path a = g_dir / "find" / "a.txt", b = g_dir / "find" / "sub" / "b.txt", skip = g_dir / "find" / "c.bin";
+    writeText(a, "foo one\nnothing\nfoo foo\n");
+    writeText(b, "x foo\n");
+    writeText(skip, "foo");
+    CHECK(w->openFiles({a}) == 1);
+    ui::FindDialog& d = w->findDialog();
+    ui::EditorView& v = *w->activeView();
+
+    core::FindOptions o;
+    o.what = "foo";
+    v.execute(SCI_GOTOPOS, 0);
+    CHECK(d.doFindNext(o) == core::FindStatus::Found && v.selectedText() == "foo");
+    CHECK(d.doCount(o) == 3);
+    CHECK(d.status().find("Count: 3 matches") == 0);
+    o.what = "zzz";
+    CHECK(d.doFindNext(o) == core::FindStatus::NotFound);
+    CHECK(d.status().find("Can't find the text \"zzz\"") != std::string::npos);
+    o.what = "(";
+    o.mode = core::SearchMode::Regex;
+    CHECK(d.doCount(o) == -1 && d.status().find("Invalid regular expression") != std::string::npos);
+
+    // Mark with bookmarks, then clear.
+    o = {};
+    o.what = "foo";
+    o.bookmarkLine = true;
+    o.purge = true;
+    CHECK(d.doMarkAll(o) == 3);
+    CHECK(v.execute(SCI_INDICATORVALUEAT, core::kFoundIndicator, 0) != 0);
+    CHECK(v.execute(SCI_MARKERNEXT, 1, 1 << 24) == 2); // lines 0 and 2 bookmarked, not 1
+    d.doClearMarks(o);
+    CHECK(v.execute(SCI_INDICATORVALUEAT, core::kFoundIndicator, 0) == 0 && v.execute(SCI_MARKERNEXT, 0, 1 << 24) == -1);
+
+    // Find All in the current document -> results panel.
+    CHECK(d.doFindAllInCurrent(o) == 3);
+    ui::SearchResults& r = w->searchResults();
+    std::string txt = r.text();
+    CHECK(txt.find("Search \"foo\" (3 hits in 1 file of 1 searched) [Normal]") == 0);
+    CHECK(txt.find("  " + a.string() + " (3 hits)\n") != std::string::npos);
+    CHECK(txt.find("\tLine 1: foo one\n") != std::string::npos);
+    CHECK(txt.find("\tLine 3: foo foo") != std::string::npos); // one entry for two hits
+    CHECK(gtk_widget_get_visible(r.widget()));
+
+    // F4 opens results in turn.
+    v.execute(SCI_GOTOPOS, 0);
+    CHECK(r.next(true));
+    CHECK(v.lineFromPos(v.currentPos()) == 0 && v.selectedText() == "foo");
+    CHECK(r.next(true));
+    CHECK(v.lineFromPos(v.currentPos()) == 2);
+
+    // Find in Files: an open (modified) document is searched as in the editor.
+    v.execute(SCI_DOCUMENTEND);
+    v.execute(SCI_ADDTEXT, 4, reinterpret_cast<sptr_t>("foo\n"));
+    o = {};
+    o.what = "foo";
+    o.directory = (g_dir / "find").string();
+    o.filters = "*.txt";
+    CHECK(d.doFindInFiles(o) == 5);
+    txt = r.text();
+    CHECK(txt.find("Search \"foo\" (5 hits in 2 files of 2 searched)") == 0);
+    CHECK(txt.find(b.string() + " (1 hit)") != std::string::npos);
+    CHECK(txt.find("c.bin") == std::string::npos);
+    CHECK(txt.find("Search \"foo\" (3 hits in 1 file", 10) != std::string::npos); // the earlier search stays below
+
+    // Replace in Files: files on disk, and the open document in the editor.
+    p.answers = {Answer::Yes};
+    o.with = "bar";
+    CHECK(d.doReplaceInFiles(o) == 5);
+    CHECK(readText(b) == "x bar\n");
+    CHECK(v.text() == "bar one\nnothing\nbar bar\nbar\n");
+    CHECK(readText(a) == "foo one\nnothing\nfoo foo\n"); // not saved behind the user's back
+    CHECK(w->isModified(*w->activeBuffer()));
+
+    // Replace, then Replace All in the current document (one undo step).
+    v.setText("cat cat cat");
+    o = {};
+    o.what = "cat";
+    o.with = "dog";
+    v.execute(SCI_GOTOPOS, 0);
+    CHECK(d.doFindNext(o) == core::FindStatus::Found);
+    CHECK(d.doReplace(o) != core::FindStatus::NotFound);
+    CHECK(v.text() == "dog cat cat" && d.status().find("1 occurrence was replaced") != std::string::npos);
+    CHECK(d.doReplaceAll(o) == 2);
+    CHECK(v.text() == "dog dog dog");
+    v.execute(SCI_UNDO);
+    CHECK(v.text() == "dog cat cat");
+
+    // Macro playback of upstream's saved search steps (Replace All).
+    d.execSaved(IDC_FRCOMMAND_INIT, 0, "");
+    d.execSaved(IDFINDWHAT, 0, "c(a)t");
+    d.execSaved(IDNORMAL, 2, "");
+    d.execSaved(IDREPLACEWITH, 0, "b$1t");
+    d.execSaved(IDC_FRCOMMAND_BOOLEANS, IDF_WRAP | IDF_WHICH_DIRECTION, "");
+    d.execSaved(IDC_FRCOMMAND_EXEC, IDREPLACEALL, "");
+    CHECK(v.text() == "dog bat bat");
+
+    // Incremental search: as you type, wrapping, highlight all with a count.
+    v.setText("Alpha beta alpha");
+    v.execute(SCI_GOTOPOS, 0);
+    ui::FindBar& inc = w->incrementalSearch();
+    CHECK(w->runCommand(IDM_SEARCH_FINDINCREMENT));
+    CHECK(inc.isVisible());
+    inc.setText("alpha");
+    CHECK(v.execute(SCI_GETSELECTIONSTART) == 0 && v.selectedText() == "Alpha");
+    inc.search(false, true);
+    CHECK(v.execute(SCI_GETSELECTIONSTART) == 11);
+    inc.search(false, true);
+    CHECK(v.execute(SCI_GETSELECTIONSTART) == 0 && inc.status().find("continued from top") != std::string::npos);
+    inc.setMatchCase(true);
+    CHECK(v.execute(SCI_GETSELECTIONSTART) == 11);
+    inc.setHighlightAll(true);
+    CHECK(v.execute(SCI_INDICATORVALUEAT, core::kIncrementalIndicator, 11) != 0 && v.execute(SCI_INDICATORVALUEAT, core::kIncrementalIndicator, 0) == 0);
+    inc.setText("zzz");
+    CHECK(inc.status() == "Phrase not found");
+    inc.hide();
+    CHECK(!inc.isVisible() && v.execute(SCI_INDICATORVALUEAT, core::kIncrementalIndicator, 11) == 0);
+    v.setText("dog bat bat");
+
+    // The dialog itself: fields -> options, Find Next from the window (F3).
+    d.show(ui::FindDialog::Tab::Replace);
+    pump();
+    CHECK(d.isVisible());
+    d.setSearchText("bat");
+    v.execute(SCI_GOTOPOS, 0);
+    d.findNext(true);
+    CHECK(v.selectedText() == "bat" && v.execute(SCI_GETSELECTIONSTART) == 4);
+    CHECK(w->runCommand(IDM_SEARCH_FINDNEXT));
+    CHECK(v.execute(SCI_GETSELECTIONSTART) == 8);
+    d.hide();
+    CHECK(!d.isVisible());
+    CHECK(!w->settings().find.what.empty() && w->settings().find.what.front() == "bat");
+}
+
+void testLocalizationAndShortcuts(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    w->setLocalization("french.xml");
+    CHECK(w->translator().fileName() == "french.xml");
+    CHECK(w->settings().localization == "french.xml");
+    CHECK(w->translator().command(IDM_FILE_NEW, "?") != "&New");
+    w->setLocalization("");
+    CHECK(w->settings().localization.empty());
+
+    // Default upstream keys...
+    gchar** accels = gtk_application_get_accels_for_action(app, ui::CommandTable::detailedName(IDM_FILE_NEW).c_str());
+    CHECK(accels && accels[0] && std::string(accels[0]) == "<Primary>n");
+    g_strfreev(accels);
+    // ... and shortcuts.xml on top of them.
+    writeText(platform::userConfigDir() / "shortcuts.xml",
+              "<NotepadPlus><InternalCommands>"
+              "<Shortcut id=\"41001\" Ctrl=\"yes\" Alt=\"yes\" Shift=\"no\" Key=\"78\" />"
+              "</InternalCommands></NotepadPlus>");
+    w->reloadShortcuts();
+    accels = gtk_application_get_accels_for_action(app, ui::CommandTable::detailedName(IDM_FILE_NEW).c_str());
+    CHECK(accels && accels[0] && std::string(accels[0]) == "<Primary><Alt>n");
+    g_strfreev(accels);
+    fs::remove(platform::userConfigDir() / "shortcuts.xml");
+    w->reloadShortcuts();
+}
+
+void testMacrosAndRun(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    w->newDocument();
+    ui::EditorView& v = *w->activeView();
+    CHECK(!w->isEnabled(IDM_MACRO_PLAYBACKRECORDEDMACRO));
+
+    // Record typing, a menu command and a search, as upstream does.
+    CHECK(w->runCommand(IDM_MACRO_STARTRECORDINGMACRO));
+    CHECK(w->isRecording() && !w->isEnabled(IDM_MACRO_STARTRECORDINGMACRO));
+    v.execute(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>("abc x"));
+    v.execute(SCI_NEWLINE);
+    v.execute(SCI_LINEUP);
+    v.execute(SCI_HOME);
+    v.execute(SCI_LINEENDEXTEND);
+    CHECK(w->runCommand(IDM_EDIT_UPPERCASE));
+    v.execute(SCI_LINEDOWN);
+    ui::FindDialog& d = w->findDialog();
+    d.setSearchText("ABC");
+    d.click(IDCCOUNTALL);
+    CHECK(w->runCommand(IDM_MACRO_STOPRECORDINGMACRO));
+    CHECK(!w->isRecording());
+    CHECK(v.text() == "ABC X\n");
+    const core::Macro m = w->recordedMacro();
+    CHECK(!m.empty() && m.front().type == core::MacroStep::UseSParam && m.front().sParam == "abc x");
+    const auto has = [&](auto pred) { return std::any_of(m.begin(), m.end(), pred); };
+    CHECK(has([](const core::MacroStep& s) { return s.type == core::MacroStep::MenuCommand && s.wParam == IDM_EDIT_UPPERCASE; }));
+    CHECK(!has([](const core::MacroStep& s) { return s.message == SCI_REPLACETARGET; })); // not twice
+    CHECK(has([](const core::MacroStep& s) { return s.type == core::MacroStep::SavedSearch && s.message == IDFINDWHAT && s.sParam == "ABC"; }));
+    CHECK(has([](const core::MacroStep& s) {
+        return s.type == core::MacroStep::SavedSearch && s.message == IDC_FRCOMMAND_EXEC && s.lParam == IDCCOUNTALL;
+    }));
+
+    // Playback: once, then several times as one undo step.
+    CHECK(w->isEnabled(IDM_MACRO_PLAYBACKRECORDEDMACRO));
+    CHECK(w->runCommand(IDM_MACRO_PLAYBACKRECORDEDMACRO));
+    CHECK(v.text() == "ABC X\nABC X\n");
+    w->playMacro(m, 2);
+    CHECK(v.text() == "ABC X\nABC X\nABC X\nABC X\n");
+    v.execute(SCI_UNDO);
+    CHECK(v.text() == "ABC X\nABC X\n");
+
+    // Until the end of the file: a macro that uppercases a line and moves down.
+    v.setText("a\nb\nc\n");
+    core::Macro down = {core::MacroStep{core::MacroStep::UseLParam, SCI_HOME, 0, 0, {}},
+                        core::MacroStep{core::MacroStep::UseLParam, SCI_LINEENDEXTEND, 0, 0, {}},
+                        core::MacroStep::command(IDM_EDIT_UPPERCASE),
+                        core::MacroStep{core::MacroStep::UseLParam, SCI_LINEDOWN, 0, 0, {}}};
+    w->playMacro(down, -1);
+    CHECK(v.text() == "A\nB\nC\n");
+
+    // Saved macros go to shortcuts.xml in upstream's format and come back.
+    w->addSavedMacro({"Upper line", core::KeyCombo{true, true, false, 'U'}, {}, down});
+    const std::string xml = readText(platform::userConfigDir() / "shortcuts.xml");
+    CHECK(xml.find("<Macro name=\"Upper line\" Ctrl=\"yes\" Alt=\"yes\" Shift=\"no\" Key=\"85\"") != std::string::npos);
+    CHECK(xml.find("<Action type=\"2\" message=\"0\" wParam=\"" + std::to_string(IDM_EDIT_UPPERCASE) + "\"") != std::string::npos);
+    w->reloadShortcuts();
+    CHECK(w->savedMacros().size() == 1 && w->savedMacros()[0].steps == down);
+    gchar** accels = gtk_application_get_accels_for_action(app, "win.run-macro::0");
+    CHECK(accels && accels[0] && std::string(accels[0]) == "<Primary><Alt>u");
+    g_strfreev(accels);
+    v.setText("q\n");
+    g_action_group_activate_action(G_ACTION_GROUP(w->window()), "run-macro", g_variant_new_string("0"));
+    CHECK(v.text() == "Q\n");
+
+    // Run: upstream variables.
+    const fs::path f = g_dir / "run" / "doc.txt";
+    writeText(f, "hello world\nsecond");
+    CHECK(w->openFiles({f}) == 1);
+    ui::EditorView& rv = *w->activeView();
+    rv.execute(SCI_GOTOPOS, 2);
+    CHECK(w->expandRunVariables("$(FULL_CURRENT_PATH)|$(CURRENT_DIRECTORY)|$(FILE_NAME)|$(NAME_PART)|$(EXT_PART)") ==
+          f.string() + "|" + f.parent_path().string() + "|doc.txt|doc|.txt");
+    CHECK(w->expandRunVariables("$(CURRENT_WORD) $(CURRENT_LINE):$(CURRENT_COLUMN) [$(CURRENT_LINESTR)] $(NOPE)") ==
+          "hello 1:3 [hello world] $(NOPE)");
+    g_setenv("NPP_TEST_VAR", "v", TRUE);
+    CHECK(w->expandRunVariables("$(SYS.NPP_TEST_VAR)") == "v");
+    const fs::path marker = g_dir / "run" / "ran.txt";
+    std::string err;
+    CHECK(w->runUserCommand("touch \"$(CURRENT_DIRECTORY)/ran.txt\"", &err));
+    for (int i = 0; i < 100 && !fs::exists(marker); ++i)
+        g_usleep(20000);
+    CHECK(fs::exists(marker));
+    CHECK(!w->runUserCommand("\"unterminated", &err) && !err.empty());
+    fs::remove(platform::userConfigDir() / "shortcuts.xml");
+}
+
+void testPreferences(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    platform::Settings& st = w->settings();
+    st.newDocEol = SC_EOL_CRLF;
+    st.newDocEncoding = 1;
+    st.newDocLanguage = "python";
+    w->newDocument();
+    ui::EditorView& v = *w->activeView();
+    CHECK(v.execute(SCI_GETEOLMODE) == SC_EOL_CRLF);
+    CHECK(w->activeBuffer()->encoding.bom == platform::Bom::Utf8);
+    CHECK(w->activeBuffer()->language && w->activeBuffer()->language->name == "python");
+
+    st.foldStyle = 4; // none
+    st.showLineNumbers = false;
+    st.showBookmarkMargin = false;
+    st.edgeMode = 1;
+    st.edgeColumn = 72;
+    st.virtualSpace = true;
+    w->applySettings();
+    CHECK(v.execute(SCI_GETMARGINWIDTHN, 2) == 0 && v.execute(SCI_GETMARGINWIDTHN, 0) == 0 && v.execute(SCI_GETMARGINWIDTHN, 1) == 0);
+    CHECK(v.execute(SCI_GETEDGEMODE) == EDGE_LINE && v.execute(SCI_GETEDGECOLUMN) == 72);
+    CHECK(v.execute(SCI_GETVIRTUALSPACEOPTIONS) & SCVS_USERACCESSIBLE);
+    st.foldStyle = 1;
+    st.showLineNumbers = true;
+    w->applySettings();
+    CHECK(v.execute(SCI_GETMARGINWIDTHN, 2) > 0 && v.execute(SCI_GETMARGINWIDTHN, 0) > 0);
+    CHECK(v.execute(SCI_MARKERSYMBOLDEFINED, SC_MARKNUM_FOLDER) == SC_MARK_ARROW);
+    st = platform::Settings{};
+}
+
+void testUserDefinedLanguages(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    CHECK(w->userLanguages().size() == 2);
+    const fs::path md = g_dir / "readme.md";
+    writeText(md, "# Title\nplain **bold** text\n");
+    CHECK(w->openFiles({md}) == 1);
+    core::Buffer* b = w->activeBuffer();
+    CHECK(b->userLanguage && b->userLanguage->name == "Markdown (preinstalled)"); // the light variant for the default theme
+    ui::EditorView& v = *w->activeView();
+    char lexer[32] = {};
+    v.execute(SCI_GETLEXERLANGUAGE, 0, reinterpret_cast<sptr_t>(lexer));
+    CHECK(std::string(lexer) == "user");
+    v.execute(SCI_COLOURISE, 0, -1);
+    CHECK(v.execute(SCI_GETSTYLEAT, 2) == SCE_USER_STYLE_COMMENTLINE);
+    const sptr_t bold = static_cast<sptr_t>(v.text().find("**bold**")) + 3;
+    CHECK(v.execute(SCI_GETSTYLEAT, static_cast<uptr_t>(bold)) >= SCE_USER_STYLE_DELIMITER1);
+    CHECK(w->commandChecked(IDM_LANG_USER_DLG) == false);
+    // Choosing a built-in language clears it; the Language menu brings it back.
+    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), "language", g_variant_new_string("cpp"));
+    CHECK(!b->userLanguage && b->language->name == "cpp");
+    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), "language", g_variant_new_string("udl:Markdown (preinstalled)"));
+    CHECK(b->userLanguage != nullptr);
+    // Sessions store the UDL by name.
+    const core::Session s = w->currentSession();
+    bool found = false;
+    for (const auto& f : s.views[0])
+        if (f.filename == md.string())
+            found = f.lang == "Markdown (preinstalled)";
+    CHECK(found);
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    char tmpl[] = "/tmp/nppgtk-ui-XXXXXX";
+    const char* root = g_mkdtemp(tmpl);
+    if (!root)
+        return 2;
+    g_setenv("XDG_CONFIG_HOME", (fs::path(root) / "config").c_str(), TRUE);
+    g_setenv("NPP_GTK_DATA_DIR", NPP_TEST_DATA_DIR, TRUE);
+    g_dir = fs::path(root) / "files";
+    fs::create_directories(g_dir);
+
+    gtk_init(&argc, &argv);
+    core::LanguageCatalog langs;
+    std::string err;
+    CHECK(langs.load(fs::path(NPP_TEST_DATA_DIR) / "langs.model.xml", &err));
+    GtkApplication* app = gtk_application_new("org.notepad_plus_plus.GtkPortUiTests", G_APPLICATION_NON_UNIQUE);
+    CHECK(g_application_register(G_APPLICATION(app), nullptr, nullptr));
+
+    std::printf("edit commands...\n");
+    testEditCommands(app, langs);
+    std::printf("find dialog and results...\n");
+    testFindDialog(app, langs);
+    std::printf("macros and run...\n");
+    testMacrosAndRun(app, langs);
+    std::printf("user defined languages...\n");
+    testUserDefinedLanguages(app, langs);
+    std::printf("preferences...\n");
+    testPreferences(app, langs);
+    std::printf("localization and shortcuts...\n");
+    testLocalizationAndShortcuts(app, langs);
+
+    g_object_unref(app);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    std::printf("%d checks, %d failures\n", g_checks, g_failures);
+    return g_failures == 0 ? 0 : 1;
+}

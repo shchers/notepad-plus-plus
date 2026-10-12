@@ -24,7 +24,7 @@ struct NppConfig {
     std::optional<platform::ChangeDetection> changeDetection;
     std::optional<int> tabSize;
     std::optional<bool> replaceTabsBySpace, autoIndent;
-    std::optional<bool> wordWrap, showAllChars, showIndentGuides;
+    std::optional<bool> wordWrap, showSpaces, showEol, showIndentGuides, showWrapSymbol;
     std::optional<int> zoom;
     std::optional<std::string> theme;  // theme file name ("Zenburn.xml"), "" = default
     std::optional<int> maxRecentFiles;

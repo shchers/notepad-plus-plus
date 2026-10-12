@@ -16,7 +16,7 @@ exist yet is opened empty and created on first save.
 Only one instance runs per user session: when the editor is already running,
 the files and switches are handed to it over D-Bus and the command returns at
 once. On start the previous session is restored, including unsaved documents
-kept by the periodic snapshot (Settings > Backup).
+kept by the periodic snapshot (Settings > Preferences > Backup).
 .SH OPTIONS
 Switches follow the Notepad++ command line syntax.
 .TP
@@ -72,7 +72,17 @@ on first start; Settings > Import Notepad++ config.xml imports one later.
 .TQ
 .I ~/.config/notepad-plus-plus-gtk/stylers.xml
 Optional user overrides of the shipped language and style definitions
-(same format as Notepad++ on Windows).
+(same format as Notepad++ on Windows). The Style Configurator saves to
+\fIstylers.xml\fR, or to a copy of the chosen theme in \fIthemes/\fR.
+.TP
+.I ~/.config/notepad-plus-plus-gtk/shortcuts.xml
+Changed keyboard shortcuts, saved macros and Run commands, in the Notepad++
+format; a file from Notepad++ on Windows works as it is.
+.TP
+.I ~/.config/notepad-plus-plus-gtk/userDefineLang.xml
+.TQ
+.I ~/.config/notepad-plus-plus-gtk/userDefineLangs/
+User Defined Languages in the Notepad++ format.
 .TP
 .I ~/.config/notepad-plus-plus-gtk/themes/
 Additional Notepad++ theme files.
