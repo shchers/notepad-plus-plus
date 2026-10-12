@@ -41,13 +41,17 @@ sudo apt install ./dist/notepad-plus-plus-gtk_*.deb
 
 ## What works
 
-Tabs, open/save with encoding detection (UTF-8, BOM, UTF-16, legacy code
-pages via uchardet), syntax highlighting for all 95 Notepad++ languages,
-the 22 upstream colour themes, find/replace with Notepad++'s regex semantics,
-folding, bookmarks, auto-indent, line operations, EOL conversion, and
-Notepad++ keyboard shortcuts and command-line switches. Docking panels,
-plugins, macros, sessions and the Preferences dialog are not ported yet. The
-full table is in [docs/PORTING.md §4](docs/PORTING.md#4-what-works-today).
+Tabs in two views (move and clone documents between them), open/save with
+encoding detection (UTF-8, BOM, UTF-16, legacy code pages via uchardet),
+syntax highlighting for all 95 Notepad++ languages, the 22 upstream colour
+themes, find/replace with Notepad++'s regex semantics, folding, bookmarks,
+auto-indent, line operations, EOL conversion, sessions in Notepad++'s
+`session.xml` format with snapshots of unsaved documents, recent files,
+backup on save, detection of files changed outside the editor, a single
+running instance, import of a Windows `config.xml`, and Notepad++ keyboard
+shortcuts and command-line switches. Docking panels, plugins, macros and the
+Preferences dialog are not ported yet. The full table is in
+[docs/PORTING.md §4](docs/PORTING.md#4-what-works-today).
 
 ## Layout
 
@@ -57,8 +61,10 @@ linux/
 ├── cmake/                  third-party targets, generated language table, install, CPack
 ├── compat/lexuser/         empty <windows.h> stand-in used only for lexilla/lexers/LexUser.cxx
 ├── src/
-│   ├── core/               UI-free model: languages, styles, lexer keyword plans
-│   ├── platform/           OS services: XDG paths, encodings, settings
+│   ├── core/               UI-free model: languages, styles, lexer keyword plans,
+│   │                       buffers, sessions, recent files, config.xml import
+│   ├── platform/           OS services: XDG paths, encodings, file I/O and
+│   │                       monitoring (GIO), settings
 │   ├── ui/                 GTK 3: EditorView (Scintilla), MainWindow, FindBar
 │   └── main.cpp            CLI compatible with Notepad++ switches
 ├── tests/                  headless CTest suite (Xvfb)

@@ -29,6 +29,17 @@ struct DecodedText {
 // Detect encoding of raw file bytes and convert to UTF-8.
 DecodedText decode(std::string_view raw);
 
+// Decode with a known charset instead of detecting (session restore keeps the
+// encoding the user had). A BOM still wins, as in upstream.
+std::optional<DecodedText> decodeAs(std::string_view raw, const std::string& charset,
+                                    std::string* error = nullptr);
+
+// Windows code page <-> iconv charset, after upstream EncodingMapper. Upstream
+// stores code pages in session.xml ("encoding" attribute, -1 = Unicode/auto).
+// Both return -1 / empty when there is no mapping.
+int codepageForCharset(std::string_view charset);
+std::string charsetForCodepage(int codepage);
+
 // Convert UTF-8 editor text back to the given encoding, prepending its BOM.
 // Returns std::nullopt (and fills *error) if the text cannot be represented.
 std::optional<std::string> encode(std::string_view utf8, const TextEncoding& enc,

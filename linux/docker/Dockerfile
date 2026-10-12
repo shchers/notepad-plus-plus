@@ -25,7 +25,7 @@ RUN apt-get update \
         build-essential cmake ninja-build pkg-config \
         libgtk-3-dev \
         dpkg-dev file \
-        xvfb xauth \
+        xvfb xauth dbus \
         ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src

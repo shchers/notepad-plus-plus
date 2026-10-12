@@ -68,7 +68,18 @@ EditorView::EditorView()
                                    self->centreOnMap_ = false;
                                    self->execute(SCI_VERTICALCENTRECARET);
                                }
+                               if (self->pendingFirstLine_ >= 0) {
+                                   self->execute(SCI_SETFIRSTVISIBLELINE, static_cast<uptr_t>(self->pendingFirstLine_));
+                                   self->execute(SCI_SETXOFFSET, static_cast<uptr_t>(self->pendingXOffset_));
+                                   self->pendingFirstLine_ = -1;
+                               }
                            }), this);
+    g_signal_connect(widget_, "focus-in-event", G_CALLBACK(+[](GtkWidget*, GdkEvent*, gpointer p) -> gboolean {
+                         auto* self = static_cast<EditorView*>(p);
+                         if (self->onFocusIn)
+                             self->onFocusIn();
+                         return FALSE;
+                     }), this);
     setupDefaults();
 }
 
@@ -362,6 +373,85 @@ bool EditorView::gotoNextBookmark(bool forward)
     return true;
 }
 
+ViewPosition EditorView::position() const
+{
+    ViewPosition p;
+    p.firstVisibleLine = pendingFirstLine_ >= 0 ? pendingFirstLine_ : execute(SCI_GETFIRSTVISIBLELINE);
+    p.xOffset = pendingFirstLine_ >= 0 ? pendingXOffset_ : execute(SCI_GETXOFFSET);
+    p.selMode = execute(SCI_GETSELECTIONMODE);
+    if (p.selMode == SC_SEL_RECTANGLE || p.selMode == SC_SEL_THIN) {
+        p.startPos = execute(SCI_GETRECTANGULARSELECTIONANCHOR);
+        p.endPos = execute(SCI_GETRECTANGULARSELECTIONCARET);
+    } else {
+        p.startPos = execute(SCI_GETANCHOR);
+        p.endPos = execute(SCI_GETCURRENTPOS);
+    }
+    p.scrollWidth = execute(SCI_GETSCROLLWIDTH);
+    return p;
+}
+
+void EditorView::restorePosition(const ViewPosition& pos)
+{
+    // Same sequence as upstream ScintillaEditView::restoreCurrentPosPreStep.
+    const sptr_t len = length();
+    const uptr_t anchor = static_cast<uptr_t>(std::clamp<sptr_t>(pos.startPos, 0, len));
+    const sptr_t caret = std::clamp<sptr_t>(pos.endPos, 0, len);
+    execute(SCI_SETSELECTIONMODE, static_cast<uptr_t>(pos.selMode));
+    if (pos.selMode == SC_SEL_RECTANGLE || pos.selMode == SC_SEL_THIN) {
+        execute(SCI_SETRECTANGULARSELECTIONANCHOR, anchor);
+        execute(SCI_SETRECTANGULARSELECTIONCARET, static_cast<uptr_t>(caret));
+    } else {
+        execute(SCI_SETANCHOR, anchor);
+        execute(SCI_SETCURRENTPOS, static_cast<uptr_t>(caret));
+    }
+    execute(SCI_CANCEL); // stop extending the selection in the restored mode
+    if (pos.scrollWidth > 0)
+        execute(SCI_SETSCROLLWIDTH, static_cast<uptr_t>(pos.scrollWidth));
+    const sptr_t first = std::max<sptr_t>(pos.firstVisibleLine, 0);
+    execute(SCI_SETFIRSTVISIBLELINE, static_cast<uptr_t>(first));
+    execute(SCI_SETXOFFSET, static_cast<uptr_t>(std::max<sptr_t>(pos.xOffset, 0)));
+    if (!gtk_widget_get_mapped(widget_)) {
+        // Without a height Scintilla clamps the top line; re-apply once sized.
+        pendingFirstLine_ = first;
+        pendingXOffset_ = std::max<sptr_t>(pos.xOffset, 0);
+    }
+}
+
+std::vector<sptr_t> EditorView::bookmarkLines() const
+{
+    std::vector<sptr_t> lines;
+    for (sptr_t l = execute(SCI_MARKERNEXT, 0, 1 << kBookmarkMarker); l >= 0;
+         l = execute(SCI_MARKERNEXT, static_cast<uptr_t>(l + 1), 1 << kBookmarkMarker))
+        lines.push_back(l);
+    return lines;
+}
+
+void EditorView::setBookmarks(const std::vector<sptr_t>& lines)
+{
+    execute(SCI_MARKERDELETEALL, kBookmarkMarker);
+    for (const sptr_t l : lines)
+        if (l >= 0 && l < lineCount())
+            execute(SCI_MARKERADD, static_cast<uptr_t>(l), kBookmarkMarker);
+}
+
+std::vector<sptr_t> EditorView::contractedFoldLines() const
+{
+    std::vector<sptr_t> lines;
+    for (sptr_t l = execute(SCI_CONTRACTEDFOLDNEXT, 0); l >= 0; l = execute(SCI_CONTRACTEDFOLDNEXT, static_cast<uptr_t>(l + 1)))
+        lines.push_back(l);
+    return lines;
+}
+
+void EditorView::contractFolds(const std::vector<sptr_t>& headerLines)
+{
+    if (headerLines.empty())
+        return;
+    execute(SCI_COLOURISE, 0, -1); // fold levels come from the lexer
+    for (const sptr_t l : headerLines)
+        if (l >= 0 && l < lineCount() && (execute(SCI_GETFOLDLEVEL, static_cast<uptr_t>(l)) & SC_FOLDLEVELHEADERFLAG))
+            execute(SCI_FOLDLINE, static_cast<uptr_t>(l), SC_FOLDACTION_CONTRACT);
+}
+
 void EditorView::maintainIndentation(int ch)
 {
     // Upstream "basic" auto-indent: a new line inherits the previous line's
@@ -434,6 +524,8 @@ void EditorView::handleNotify(const SCNotification& n)
     case SCN_MODIFIED:
         if (n.linesAdded != 0)
             updateLineNumberWidth();
+        if ((n.modificationType & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)) && onTextModified)
+            onTextModified();
         break;
     case SCN_CHARADDED:
         if (autoIndent && (n.ch == '\n' || n.ch == '\r'))

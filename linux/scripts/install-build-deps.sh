@@ -12,7 +12,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config \
     libgtk-3-dev \
-    xvfb xauth \
+    xvfb xauth dbus \
     dpkg-dev file \
     debhelper fakeroot lintian
 

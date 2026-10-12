@@ -44,7 +44,10 @@ seconds.
 
 The tests start a real GTK window. With no `DISPLAY`/`WAYLAND_DISPLAY` (SSH,
 CI, containers) CMake wraps them in `xvfb-run` automatically; on a desktop
-session they briefly use your display.
+session they briefly use your display. The `single_instance` test runs on a
+private session bus from `dbus-run-session` (package `dbus`) and is reported
+as skipped without it. Tests use their own config directory, never
+`~/.config/notepad-plus-plus-gtk`.
 
 ### 3. Run without installing
 

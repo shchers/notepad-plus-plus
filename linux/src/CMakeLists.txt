@@ -1,19 +1,28 @@
 # Port code. Split into a library (everything testable) and the thin app.
 #
-#   platform/  OS services that replace Win32 calls (paths, encodings)
-#   core/      UI-free Notepad++ model code (languages, styles)
+#   platform/  OS services that replace Win32 calls (paths, encodings,
+#              file I/O and monitoring, settings)
+#   core/      UI-free Notepad++ model code (languages, styles, buffers,
+#              sessions, recent files, config.xml import)
 #   ui/        GTK3 widgets (editor view, main window)
 
 add_library(nppgtk_core STATIC
+  platform/FileIO.cpp
+  platform/FileMonitor.cpp
   platform/Paths.cpp
   platform/Settings.cpp
   platform/TextCodec.cpp
+  core/FileManager.cpp
   core/LanguageCatalog.cpp
   core/LexerSetup.cpp
+  core/NppConfig.cpp
+  core/RecentFiles.cpp
+  core/Session.cpp
   core/StyleCatalog.cpp
   ui/EditorView.cpp
   ui/FindBar.cpp
   ui/MainWindow.cpp
+  ui/MainWindowDocs.cpp
 )
 target_include_directories(nppgtk_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"

@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 
+#include "core/NppConfig.h"
 #include "platform/Paths.h"
 
 #include <algorithm>
@@ -82,10 +83,42 @@ double luminance(std::uint32_t bgr)
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
 }
 
-struct TabCtx {
-    MainWindow* win;
-    GtkWidget* page;
-};
+// GMenu labels use mnemonics: keep underscores in file names literal.
+std::string escapeMnemonic(std::string_view s)
+{
+    std::string out;
+    for (char c : s) {
+        if (c == '_')
+            out += '_';
+        out += c;
+    }
+    return out;
+}
+
+void setClipboard(const std::string& text)
+{
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), text.c_str(), static_cast<gint>(text.size()));
+}
+
+const char* saveBackupId(platform::SaveBackup b)
+{
+    switch (b) {
+    case platform::SaveBackup::Simple: return "simple";
+    case platform::SaveBackup::Verbose: return "verbose";
+    case platform::SaveBackup::None: break;
+    }
+    return "none";
+}
+
+const char* changeDetectionId(platform::ChangeDetection c)
+{
+    switch (c) {
+    case platform::ChangeDetection::Off: return "off";
+    case platform::ChangeDetection::AutoUpdate: return "auto";
+    case platform::ChangeDetection::Notify: break;
+    }
+    return "notify";
+}
 
 } // namespace
 
@@ -93,9 +126,12 @@ struct TabCtx {
 // Construction
 // ============================================================================
 
-MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs) : app_(app), langs_(langs)
+MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool useSession)
+    : app_(app), langs_(langs), useSession_(useSession)
 {
-    settings_.load();
+    importConfigOnFirstRun(settings_.load());
+    recent_.setMax(static_cast<std::size_t>(std::max(settings_.maxRecentFiles, 0)));
+    recent_.assign(settings_.recentFiles);
 
     window_ = gtk_application_window_new(app_);
     g_object_ref(window_); // keep alive until our destructor
@@ -113,12 +149,17 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs) : app_
     buildMenus(vbox);
     buildToolbar(vbox);
 
-    notebook_ = gtk_notebook_new();
-    gtk_notebook_set_scrollable(GTK_NOTEBOOK(notebook_), TRUE);
-    gtk_notebook_popup_enable(GTK_NOTEBOOK(notebook_));
-    gtk_widget_set_vexpand(notebook_, TRUE);
-    gtk_box_pack_start(GTK_BOX(vbox), notebook_, TRUE, TRUE, 0);
-    g_signal_connect(notebook_, "switch-page", G_CALLBACK(&MainWindow::onSwitchPage), this);
+    // Two views side by side, as upstream's main and sub view.
+    paned_ = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    g_object_ref(paned_); // read in the destructor, after GTK may have destroyed the window
+    notebooks_[kMainView] = buildNotebook(kMainView);
+    notebooks_[kSubView] = buildNotebook(kSubView);
+    gtk_paned_pack1(GTK_PANED(paned_), notebooks_[kMainView], TRUE, FALSE);
+    gtk_paned_pack2(GTK_PANED(paned_), notebooks_[kSubView], TRUE, FALSE);
+    if (settings_.splitPosition > 0)
+        gtk_paned_set_position(GTK_PANED(paned_), settings_.splitPosition);
+    gtk_widget_set_vexpand(paned_, TRUE);
+    gtk_box_pack_start(GTK_BOX(vbox), paned_, TRUE, TRUE, 0);
 
     findBar_ = std::make_unique<FindBar>([this] { return activeView(); });
     gtk_box_pack_start(GTK_BOX(vbox), findBar_->widget(), FALSE, FALSE, 0);
@@ -131,23 +172,70 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs) : app_
     g_signal_connect(window_, "key-press-event", G_CALLBACK(&MainWindow::onKeyPress), this);
     g_signal_connect(window_, "configure-event", G_CALLBACK(&MainWindow::onConfigure), this);
     g_signal_connect(window_, "window-state-event", G_CALLBACK(&MainWindow::onWindowState), this);
+    g_signal_connect(window_, "notify::is-active", G_CALLBACK(&MainWindow::onActiveChanged), this);
 
     gtk_widget_show_all(vbox);
+    gtk_widget_hide(notebooks_[kSubView]);
+    refreshRecentMenu();
 }
 
 MainWindow::~MainWindow()
 {
-    if (refreshIdle_)
-        g_source_remove(refreshIdle_);
+    closing_ = true;
+    for (guint* src : {&refreshIdle_, &changeCheckIdle_, &snapshotTimer_})
+        if (*src)
+            g_source_remove(*src);
+    if (paned_ && gtk_widget_get_visible(notebooks_[kSubView]) && gtk_widget_get_visible(notebooks_[kMainView]))
+        settings_.splitPosition = gtk_paned_get_position(GTK_PANED(paned_));
+    settings_.recentFiles = recent_.items();
     settings_.save();
-    docs_.clear(); // releases Scintilla widgets before the window goes
+    monitors_.clear();
     if (window_) {
         g_signal_handlers_disconnect_by_data(window_, this);
-        if (notebook_)
-            g_signal_handlers_disconnect_by_data(notebook_, this);
-        gtk_widget_destroy(window_);
-        g_object_unref(window_);
+        for (GtkWidget* nb : notebooks_)
+            if (nb)
+                g_signal_handlers_disconnect_by_data(nb, this);
     }
+    tabs_.clear(); // releases Scintilla widgets before the window goes
+    if (tabMenu_) {
+        gtk_widget_destroy(tabMenu_);
+        g_object_unref(tabMenu_);
+    }
+    if (recentSection_)
+        g_object_unref(recentSection_);
+    if (window_)
+        gtk_widget_destroy(window_);
+    for (GtkWidget* w : {notebooks_[kMainView], notebooks_[kSubView], paned_})
+        if (w)
+            g_object_unref(w);
+    if (window_)
+        g_object_unref(window_);
+}
+
+GtkWidget* MainWindow::buildNotebook(int)
+{
+    GtkWidget* nb = gtk_notebook_new();
+    g_object_ref(nb); // outlives the window's destruction, see ~MainWindow
+    gtk_notebook_set_scrollable(GTK_NOTEBOOK(nb), TRUE);
+    gtk_notebook_popup_enable(GTK_NOTEBOOK(nb));
+    gtk_widget_set_hexpand(nb, TRUE);
+    g_signal_connect(nb, "switch-page", G_CALLBACK(&MainWindow::onSwitchPage), this);
+    return nb;
+}
+
+void MainWindow::importConfigOnFirstRun(bool settingsExisted)
+{
+    // First start with a Notepad++ config.xml dropped into the config
+    // directory: take its settings over, as upstream reads its own.
+    const fs::path cfg = platform::userConfigDir() / "config.xml";
+    std::error_code ec;
+    if (settingsExisted || !fs::is_regular_file(cfg, ec))
+        return;
+    std::string err;
+    if (auto c = core::readNppConfig(cfg, &err))
+        core::applyNppConfig(*c, settings_);
+    else
+        g_warning("Ignoring %s", err.c_str());
 }
 
 void MainWindow::present()
@@ -196,27 +284,57 @@ std::vector<std::string> MainWindow::availableThemes() const
 void MainWindow::buildActions()
 {
     auto view = [this] { return activeView(); };
+    auto buf = [this] { return activeBuffer(); };
+    auto zoomAll = [this] {
+        for (auto& t : tabs_)
+            applyViewSettings(*t->view);
+    };
+    auto zoomFromActive = [this, zoomAll] {
+        if (EditorView* v = activeView())
+            settings_.zoom = static_cast<int>(v->execute(SCI_GETZOOM));
+        zoomAll();
+    };
     commands_ = {
         {"new", [this] { newDocument(); }},
         {"open", [this] { cmdOpen(); }},
-        {"reload", [this] {
-             if (Document* d = activeDoc(); d && !d->isUntitled()) {
-                 if (d->isModified() && !confirmClose(*d))
-                     return;
-                 std::string err;
-                 if (!loadInto(*d, d->path, &err))
-                     showError("Cannot reload file", err);
-             }
+        {"reload", [this, buf] {
+             core::Buffer* b = buf();
+             if (!b || b->isUntitled())
+                 return;
+             if (isModified(*b) && ask("Are you sure you want to reload the current file and lose the changes made in Notepad++?",
+                                       b->path.string(), false) != Answer::Yes)
+                 return;
+             std::string err;
+             if (!reloadBuffer(*b, &err))
+                 showError("Cannot reload file", err);
          }},
-        {"save", [this] { if (Document* d = activeDoc()) save(*d, false); }},
-        {"save-as", [this] { if (Document* d = activeDoc()) save(*d, true); }},
+        {"save", [this, buf] { if (core::Buffer* b = buf()) save(*b, false); }},
+        {"save-as", [this, buf] { if (core::Buffer* b = buf()) save(*b, true); }},
         {"save-all", [this] {
-             for (auto& d : docs_)
-                 if (d->isModified() && !save(*d, false))
+             for (core::Buffer* b : buffers())
+                 if (isModified(*b) && !save(*b, false))
                      break;
          }},
-        {"close", [this] { if (Document* d = activeDoc()) closeDocument(*d); }},
-        {"close-all", [this] { cmdCloseAll(); }},
+        {"close", [this] { if (Tab* t = activeTab()) closeTab(*t); }},
+        {"close-all", [this] { closeAll(); }},
+        {"close-others", [this] {
+             Tab* keep = activeTab();
+             if (!keep)
+                 return;
+             for (int vi : {kSubView, kMainView})
+                 for (Tab* t : tabsInOrder(vi))
+                     if (t->buf != keep->buf && !closeTab(*t, false))
+                         return;
+             for (Tab* t : tabsOf(*keep->buf)) // its clone goes too
+                 if (t != keep)
+                     removeTab(*t);
+             activateTab(*keep);
+         }},
+        {"load-session", [this] { cmdLoadSession(); }},
+        {"save-session", [this] { cmdSaveSession(); }},
+        {"restore-recent", [this] { cmdRestoreRecent(); }},
+        {"open-all-recent", [this] { cmdOpenAllRecent(); }},
+        {"clear-recent", [this] { recent_.clear(); refreshRecentMenu(); }},
         {"quit", [this] { gtk_window_close(GTK_WINDOW(window_)); }},
 
         {"undo", [this] { sciCommand(SCI_UNDO); }},
@@ -233,6 +351,18 @@ void MainWindow::buildActions()
         {"upper", [this] { sciCommand(SCI_UPPERCASE); }},
         {"lower", [this] { sciCommand(SCI_LOWERCASE); }},
         {"toggle-comment", [view] { if (EditorView* v = view()) v->toggleLineComment(); }},
+        {"copy-full-path", [buf] { if (core::Buffer* b = buf()) setClipboard(b->fullName()); }},
+        {"copy-file-name", [buf] { if (core::Buffer* b = buf()) setClipboard(b->name()); }},
+        {"copy-dir-path", [buf] { if (core::Buffer* b = buf(); b && !b->isUntitled()) setClipboard(b->path.parent_path().string()); }},
+        {"open-folder", [this, buf] {
+             core::Buffer* b = buf();
+             if (!b || b->isUntitled())
+                 return;
+             gchar* uri = g_filename_to_uri(b->path.parent_path().c_str(), nullptr, nullptr);
+             if (uri && !gtk_show_uri_on_window(GTK_WINDOW(window_), uri, GDK_CURRENT_TIME, nullptr))
+                 showError("Cannot open the containing folder", b->path.parent_path().string());
+             g_free(uri);
+         }},
 
         {"find", [this] { findBar_->show(false); }},
         {"replace", [this] { findBar_->show(true); }},
@@ -243,19 +373,26 @@ void MainWindow::buildActions()
         {"bookmark-next", [view] { if (EditorView* v = view()) v->gotoNextBookmark(true); }},
         {"bookmark-prev", [view] { if (EditorView* v = view()) v->gotoNextBookmark(false); }},
 
-        {"zoom-in", [this] { sciCommand(SCI_ZOOMIN); if (EditorView* v = activeView()) { settings_.zoom = static_cast<int>(v->execute(SCI_GETZOOM)); for (auto& d : docs_) applyViewSettings(*d->view); } }},
-        {"zoom-out", [this] { sciCommand(SCI_ZOOMOUT); if (EditorView* v = activeView()) { settings_.zoom = static_cast<int>(v->execute(SCI_GETZOOM)); for (auto& d : docs_) applyViewSettings(*d->view); } }},
-        {"zoom-reset", [this] { settings_.zoom = 0; for (auto& d : docs_) applyViewSettings(*d->view); }},
+        {"zoom-in", [this, zoomFromActive] { sciCommand(SCI_ZOOMIN); zoomFromActive(); }},
+        {"zoom-out", [this, zoomFromActive] { sciCommand(SCI_ZOOMOUT); zoomFromActive(); }},
+        {"zoom-reset", [this, zoomAll] { settings_.zoom = 0; zoomAll(); }},
         {"next-tab", [this] {
-             const int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(notebook_));
+             GtkNotebook* nb = GTK_NOTEBOOK(notebooks_[activeView_]);
+             const int n = gtk_notebook_get_n_pages(nb);
              if (n > 1)
-                 gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook_), (gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook_)) + 1) % n);
+                 gtk_notebook_set_current_page(nb, (gtk_notebook_get_current_page(nb) + 1) % n);
          }},
         {"prev-tab", [this] {
-             const int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(notebook_));
+             GtkNotebook* nb = GTK_NOTEBOOK(notebooks_[activeView_]);
+             const int n = gtk_notebook_get_n_pages(nb);
              if (n > 1)
-                 gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook_), (gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook_)) + n - 1) % n);
+                 gtk_notebook_set_current_page(nb, (gtk_notebook_get_current_page(nb) + n - 1) % n);
          }},
+        {"move-to-other-view", [this] { moveToOtherView(); }},
+        {"clone-to-other-view", [this] { cloneToOtherView(); }},
+        {"switch-view", [this] { switchToOtherView(); }},
+
+        {"import-config", [this] { cmdImportConfig(); }},
         {"about", [this] { cmdAbout(); }},
     };
     for (const auto& [name, fn] : commands_) {
@@ -264,6 +401,10 @@ void MainWindow::buildActions()
         g_action_map_add_action(G_ACTION_MAP(window_), G_ACTION(a));
         g_object_unref(a);
     }
+    GSimpleAction* recent = g_simple_action_new("open-recent", G_VARIANT_TYPE_STRING);
+    g_signal_connect(recent, "activate", G_CALLBACK(&MainWindow::onOpenRecent), this);
+    g_action_map_add_action(G_ACTION_MAP(window_), G_ACTION(recent));
+    g_object_unref(recent);
 
     // Stateful actions (check / radio items).
     auto addState = [this](const char* name, GVariant* initial) {
@@ -281,6 +422,13 @@ void MainWindow::buildActions()
     addState("encoding", g_variant_new_string("utf-8"));
     addState("eol", g_variant_new_string("lf"));
     addState("theme", g_variant_new_string(settings_.theme.c_str()));
+    addState("read-only", g_variant_new_boolean(false));
+    addState("remember-session", g_variant_new_boolean(settings_.rememberSession));
+    addState("snapshot", g_variant_new_boolean(settings_.snapshot));
+    addState("save-backup", g_variant_new_string(saveBackupId(settings_.saveBackup)));
+    addState("change-detection", g_variant_new_string(changeDetectionId(settings_.changeDetection)));
+    addState("replace-tabs", g_variant_new_boolean(settings_.replaceTabsBySpace));
+    addState("auto-indent", g_variant_new_boolean(settings_.autoIndent));
 
     // Upstream default shortcuts (see shortcuts.xml / Shortcut Mapper).
     const std::pair<const char*, std::vector<const char*>> accels[] = {
@@ -317,6 +465,8 @@ void MainWindow::buildActions()
         {"win.zoom-reset", {"<Primary>0", "<Primary>KP_Divide"}},
         {"win.next-tab", {"<Primary>Tab", "<Primary>Page_Down"}},
         {"win.prev-tab", {"<Primary><Shift>ISO_Left_Tab", "<Primary>Page_Up"}},
+        {"win.restore-recent", {"<Primary><Shift>t"}},
+        {"win.switch-view", {"F8"}},
         {"win.reload", {}},
     };
     for (const auto& [action, keys] : accels) {
@@ -334,6 +484,7 @@ void MainWindow::buildMenus(GtkWidget* vbox)
     GMenu* s = section(file);
     addItem(s, "_New", "win.new");
     addItem(s, "_Open…", "win.open");
+    addItem(s, "Open Containing _Folder", "win.open-folder");
     addItem(s, "Re_load from Disk", "win.reload");
     s = section(file);
     addItem(s, "_Save", "win.save");
@@ -342,6 +493,17 @@ void MainWindow::buildMenus(GtkWidget* vbox)
     s = section(file);
     addItem(s, "_Close", "win.close");
     addItem(s, "Clos_e All", "win.close-all");
+    addItem(s, "Close All _but Active Document", "win.close-others");
+    s = section(file);
+    addItem(s, "Load Sess_ion…", "win.load-session");
+    addItem(s, "Save Sessio_n…", "win.save-session");
+    // Upstream keeps the history in the File menu itself.
+    s = section(file);
+    addItem(s, "Restore Recent Closed File", "win.restore-recent");
+    addItem(s, "Open All Recent Files", "win.open-all-recent");
+    addItem(s, "Empty Recent Files List", "win.clear-recent");
+    recentSection_ = section(file);
+    g_object_ref(recentSection_); // rebuilt by refreshRecentMenu()
     s = section(file);
     addItem(s, "E_xit", "win.quit");
 
@@ -370,6 +532,12 @@ void MainWindow::buildMenus(GtkWidget* vbox)
     addTargetItem(eol, "Windows (CR LF)", "win.eol", "crlf");
     addTargetItem(eol, "Unix (LF)", "win.eol", "lf");
     addTargetItem(eol, "Macintosh (CR)", "win.eol", "cr");
+    s = section(edit);
+    GMenu* clip = submenu(s, "Copy to Clip_board");
+    addItem(clip, "Copy Current Full File Path", "win.copy-full-path");
+    addItem(clip, "Copy Current Filename", "win.copy-file-name");
+    addItem(clip, "Copy Current Dir. Path", "win.copy-dir-path");
+    addItem(s, "Read-_Only", "win.read-only");
 
     GMenu* search = submenu(bar, "_Search");
     s = section(search);
@@ -397,6 +565,10 @@ void MainWindow::buildMenus(GtkWidget* vbox)
     s = section(viewM);
     addItem(s, "Next Tab", "win.next-tab");
     addItem(s, "Previous Tab", "win.prev-tab");
+    s = section(viewM);
+    addItem(s, "_Move to Other View", "win.move-to-other-view");
+    addItem(s, "C_lone to Other View", "win.clone-to-other-view");
+    addItem(s, "S_witch to Other View", "win.switch-view");
 
     GMenu* enc = submenu(bar, "E_ncoding");
     s = section(enc);
@@ -426,6 +598,25 @@ void MainWindow::buildMenus(GtkWidget* vbox)
     GMenu* themes = section(theme);
     for (const std::string& t : availableThemes())
         addTargetItem(themes, fs::path(t).stem().string(), "win.theme", t);
+    // Subsets of upstream Preferences: Backup, MISC. and Indentation.
+    s = section(settings);
+    GMenu* backup = submenu(s, "_Backup");
+    GMenu* bs = section(backup);
+    addItem(bs, "Remember Current Session for Next Launch", "win.remember-session");
+    addItem(bs, "Session Snapshot and Periodic Backup", "win.snapshot");
+    bs = section(backup);
+    addTargetItem(bs, "No Backup on Save", "win.save-backup", "none");
+    addTargetItem(bs, "Simple Backup on Save (.bak)", "win.save-backup", "simple");
+    addTargetItem(bs, "Verbose Backup on Save (nppBackup)", "win.save-backup", "verbose");
+    GMenu* detect = submenu(s, "File Status _Auto-Detection");
+    addTargetItem(detect, "Disabled", "win.change-detection", "off");
+    addTargetItem(detect, "Enabled (Ask to Reload)", "win.change-detection", "notify");
+    addTargetItem(detect, "Update Silently", "win.change-detection", "auto");
+    GMenu* indent = submenu(s, "_Indentation");
+    addItem(indent, "Replace Tabs by Space", "win.replace-tabs");
+    addItem(indent, "Auto-Indent", "win.auto-indent");
+    s = section(settings);
+    addItem(s, "_Import Notepad++ config.xml…", "win.import-config");
 
     GMenu* help = submenu(bar, "_?");
     addItem(help, "_About Notepad++ (GTK)…", "win.about");
@@ -433,6 +624,29 @@ void MainWindow::buildMenus(GtkWidget* vbox)
     GtkWidget* menubar = gtk_menu_bar_new_from_model(G_MENU_MODEL(bar));
     gtk_box_pack_start(GTK_BOX(vbox), menubar, FALSE, FALSE, 0);
     g_object_unref(bar);
+
+    // Tab context menu (upstream tabContextMenu defaults, abridged).
+    GMenu* tm = g_menu_new();
+    s = section(tm);
+    addItem(s, "Close", "win.close");
+    addItem(s, "Close All but This", "win.close-others");
+    addItem(s, "Save", "win.save");
+    addItem(s, "Save As…", "win.save-as");
+    addItem(s, "Reload", "win.reload");
+    s = section(tm);
+    addItem(s, "Open Containing Folder", "win.open-folder");
+    addItem(s, "Copy Full File Path", "win.copy-full-path");
+    addItem(s, "Copy Filename", "win.copy-file-name");
+    addItem(s, "Copy Dir. Path", "win.copy-dir-path");
+    s = section(tm);
+    addItem(s, "Read-Only", "win.read-only");
+    s = section(tm);
+    addItem(s, "Move to Other View", "win.move-to-other-view");
+    addItem(s, "Clone to Other View", "win.clone-to-other-view");
+    tabMenu_ = gtk_menu_new_from_model(G_MENU_MODEL(tm));
+    g_object_ref_sink(tabMenu_);
+    gtk_menu_attach_to_widget(GTK_MENU(tabMenu_), window_, nullptr); // resolves "win." actions
+    g_object_unref(tm);
 }
 
 void MainWindow::buildToolbar(GtkWidget* vbox)
@@ -493,351 +707,42 @@ void MainWindow::buildStatusBar(GtkWidget* vbox)
 }
 
 // ============================================================================
-// Documents
-// ============================================================================
-
-MainWindow::Document* MainWindow::addDocument(std::unique_ptr<Document> doc)
-{
-    Document* d = doc.get();
-    EditorView& v = *d->view;
-    applyViewSettings(v);
-
-    GtkWidget* page = v.widget();
-    v.onUpdateUI = [this, d] {
-        if (d == activeDoc())
-            refreshStatus();
-    };
-    v.onSavePoint = [this, d](bool) {
-        refreshTab(*d);
-        if (d == activeDoc())
-            refreshTitle();
-    };
-    v.onUriDropped = [this](std::string_view uris) { openUriList(uris); };
-
-    // Tab label: [name][x], middle click closes (upstream option, on by default here).
-    GtkWidget* ebox = gtk_event_box_new();
-    gtk_event_box_set_visible_window(GTK_EVENT_BOX(ebox), FALSE);
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    d->tabText = gtk_label_new(nullptr);
-    GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
-    gtk_button_set_relief(GTK_BUTTON(close), GTK_RELIEF_NONE);
-    gtk_widget_set_focus_on_click(close, FALSE);
-    gtk_widget_set_tooltip_text(close, "Close");
-    gtk_box_pack_start(GTK_BOX(box), d->tabText, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(box), close, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(ebox), box);
-    gtk_widget_show_all(ebox);
-    d->tabLabel = ebox;
-
-    auto freeCtx = +[](gpointer p, GClosure*) { delete static_cast<TabCtx*>(p); };
-    g_signal_connect_data(close, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
-                              auto* c = static_cast<TabCtx*>(p);
-                              if (Document* doc = c->win->docForPage(c->page))
-                                  c->win->closeDocument(*doc);
-                          }),
-                          new TabCtx{this, page}, freeCtx, GConnectFlags(0));
-    g_signal_connect_data(ebox, "button-press-event", G_CALLBACK(+[](GtkWidget*, GdkEventButton* ev, gpointer p) -> gboolean {
-                              auto* c = static_cast<TabCtx*>(p);
-                              if (ev->type == GDK_BUTTON_PRESS && ev->button == 2) {
-                                  if (Document* doc = c->win->docForPage(c->page))
-                                      c->win->closeDocument(*doc);
-                                  return TRUE;
-                              }
-                              return FALSE;
-                          }),
-                          new TabCtx{this, page}, freeCtx, GConnectFlags(0));
-
-    docs_.push_back(std::move(doc));
-    gtk_widget_show(page);
-    const int idx = gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), page, ebox);
-    gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(notebook_), page, TRUE);
-    refreshTab(*d);
-    gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook_), idx);
-    gtk_widget_grab_focus(page);
-    return d;
-}
-
-std::string MainWindow::nextUntitledName() const
-{
-    for (int n = 1;; ++n) {
-        std::string name = "new " + std::to_string(n);
-        if (std::none_of(docs_.begin(), docs_.end(), [&](const auto& d) { return d->isUntitled() && d->untitledName == name; }))
-            return name;
-    }
-}
-
-void MainWindow::newDocument()
-{
-    auto doc = std::make_unique<Document>();
-    doc->view = std::make_unique<EditorView>();
-    doc->untitledName = nextUntitledName();
-    Document* d = addDocument(std::move(doc));
-    setLanguage(*d, langs_.plainText());
-    syncActionStates();
-    refreshTitle();
-    refreshStatus();
-}
-
-MainWindow::Document* MainWindow::activeDoc() const
-{
-    const int page = gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook_));
-    if (page < 0)
-        return nullptr;
-    return docForPage(gtk_notebook_get_nth_page(GTK_NOTEBOOK(notebook_), page));
-}
-
-EditorView* MainWindow::activeView() const
-{
-    Document* d = activeDoc();
-    return d ? d->view.get() : nullptr;
-}
-
-std::string MainWindow::activeTitle() const
-{
-    return gtk_window_get_title(GTK_WINDOW(window_)) ? gtk_window_get_title(GTK_WINDOW(window_)) : "";
-}
-
-MainWindow::Document* MainWindow::docForPage(GtkWidget* page) const
-{
-    for (const auto& d : docs_)
-        if (d->view->widget() == page)
-            return d.get();
-    return nullptr;
-}
-
-MainWindow::Document* MainWindow::findByPath(const fs::path& p) const
-{
-    for (const auto& d : docs_)
-        if (!d->isUntitled() && d->path == p)
-            return d.get();
-    return nullptr;
-}
-
-bool MainWindow::loadInto(Document& doc, const fs::path& p, std::string* error)
-{
-    std::error_code ec;
-    if (fs::is_directory(p, ec)) {
-        *error = p.string() + " is a directory.";
-        return false;
-    }
-    std::string raw;
-    if (fs::exists(p, ec)) {
-        gchar* contents = nullptr;
-        gsize len = 0;
-        GError* err = nullptr;
-        if (!g_file_get_contents(p.c_str(), &contents, &len, &err)) {
-            *error = err ? err->message : "read failed";
-            if (err)
-                g_error_free(err);
-            return false;
-        }
-        raw.assign(contents, len);
-        g_free(contents);
-    }
-    // A path that does not exist yet opens as an empty document that will be
-    // created on save (upstream asks first; good enough for the skeleton).
-    platform::DecodedText dec = platform::decode(raw);
-    doc.path = p;
-    doc.encoding = dec.encoding;
-    doc.encodingChanged = false;
-    doc.view->execute(SCI_SETREADONLY, 0);
-    doc.view->setText(dec.utf8);
-    doc.view->setEolMode(doc.view->detectEolMode(SC_EOL_LF), false);
-    setLanguage(doc, langs_.forFile(p));
-    lastDir_ = p.parent_path();
-    return true;
-}
-
-int MainWindow::openFiles(const std::vector<fs::path>& files, const OpenOptions& opts)
-{
-    int opened = 0;
-    for (const fs::path& f : files) {
-        std::error_code ec;
-        fs::path p = fs::weakly_canonical(fs::absolute(f, ec), ec);
-        if (ec)
-            p = fs::absolute(f);
-
-        Document* d = findByPath(p);
-        if (!d) {
-            // Replace a lone pristine "new 1", as upstream does.
-            Document* reuse = nullptr;
-            if (docs_.size() == 1 && docs_[0]->isUntitled() && !docs_[0]->isModified() && docs_[0]->view->length() == 0)
-                reuse = docs_[0].get();
-
-            std::unique_ptr<Document> fresh;
-            Document* target = reuse;
-            if (!target) {
-                fresh = std::make_unique<Document>();
-                fresh->view = std::make_unique<EditorView>();
-                target = fresh.get();
-            }
-            std::string err;
-            if (!loadInto(*target, p, &err)) {
-                showError("Cannot open file \"" + p.filename().string() + "\"", err);
-                continue;
-            }
-            d = fresh ? addDocument(std::move(fresh)) : target;
-            refreshTab(*d);
-            ++opened;
-        }
-        gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook_), gtk_notebook_page_num(GTK_NOTEBOOK(notebook_), d->view->widget()));
-
-        if (opts.language)
-            setLanguage(*d, *opts.language);
-        if (opts.line || opts.column)
-            d->view->gotoLine(opts.line.value_or(1) - 1, opts.column.value_or(1) - 1);
-        if (opts.readOnly)
-            d->view->execute(SCI_SETREADONLY, 1);
-    }
-    syncActionStates();
-    refreshTitle();
-    refreshStatus();
-    return opened;
-}
-
-void MainWindow::setLanguage(Document& doc, const core::Language& lang)
-{
-    doc.view->applyLanguage(lang, langs_, styles_);
-    applyViewSettings(*doc.view);
-    if (&doc == activeDoc()) {
-        syncActionStates();
-        refreshStatus();
-    }
-}
-
-bool MainWindow::save(Document& doc, bool saveAs)
-{
-    fs::path target = doc.path;
-    if (doc.isUntitled() || saveAs) {
-        GtkFileChooserNative* dlg = gtk_file_chooser_native_new("Save As", GTK_WINDOW(window_), GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", "_Cancel");
-        gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dlg), TRUE);
-        if (!doc.isUntitled())
-            gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(dlg), doc.path.c_str());
-        else {
-            if (!lastDir_.empty())
-                gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), lastDir_.c_str());
-            gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dlg), doc.untitledName.c_str());
-        }
-        const gint res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(dlg));
-        if (res == GTK_RESPONSE_ACCEPT) {
-            gchar* fn = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
-            if (fn) {
-                target = fn;
-                g_free(fn);
-            }
-        }
-        g_object_unref(dlg);
-        if (res != GTK_RESPONSE_ACCEPT || target.empty())
-            return false;
-    }
-
-    std::string err;
-    auto bytes = platform::encode(doc.view->text(), doc.encoding, &err);
-    if (!bytes) {
-        showError("Cannot save \"" + doc.name() + "\" as " + doc.encoding.displayName(),
-                  "The text contains characters this encoding cannot represent (" + err +
-                      "). Choose Encoding > UTF-8 and save again.");
-        return false;
-    }
-    GFile* gf = g_file_new_for_path(target.c_str());
-    GError* gerr = nullptr;
-    const gboolean ok = g_file_replace_contents(gf, bytes->data(), bytes->size(), nullptr, FALSE, G_FILE_CREATE_NONE, nullptr, nullptr, &gerr);
-    g_object_unref(gf);
-    if (!ok) {
-        showError("Cannot save \"" + target.filename().string() + "\"", gerr ? gerr->message : "write failed");
-        if (gerr)
-            g_error_free(gerr);
-        return false;
-    }
-
-    const bool wasUntitled = doc.isUntitled();
-    const bool nameChanged = doc.path != target;
-    doc.path = target;
-    lastDir_ = target.parent_path();
-    doc.encodingChanged = false;
-    doc.view->execute(SCI_SETSAVEPOINT);
-    // Upstream re-detects the language when an untitled/plain doc gets a name.
-    if ((wasUntitled || nameChanged) && (!doc.view->language() || doc.view->language()->isPlainText()))
-        setLanguage(doc, langs_.forFile(target));
-    refreshTab(doc);
-    refreshTitle();
-    refreshStatus();
-    return true;
-}
-
-bool MainWindow::confirmClose(Document& doc)
-{
-    if (!doc.isModified())
-        return true;
-    gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook_), gtk_notebook_page_num(GTK_NOTEBOOK(notebook_), doc.view->widget()));
-    GtkWidget* dlg = gtk_message_dialog_new(GTK_WINDOW(window_), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
-                                            "Save file \"%s\"?", doc.isUntitled() ? doc.untitledName.c_str() : doc.path.c_str());
-    gtk_dialog_add_buttons(GTK_DIALOG(dlg), "_Cancel", GTK_RESPONSE_CANCEL, "_No", GTK_RESPONSE_NO, "_Yes", GTK_RESPONSE_YES, nullptr);
-    gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_YES);
-    const gint r = gtk_dialog_run(GTK_DIALOG(dlg));
-    gtk_widget_destroy(dlg);
-    if (r == GTK_RESPONSE_YES)
-        return save(doc, false);
-    return r == GTK_RESPONSE_NO;
-}
-
-bool MainWindow::closeDocument(Document& doc, bool keepOne)
-{
-    if (!confirmClose(doc))
-        return false;
-    const int page = gtk_notebook_page_num(GTK_NOTEBOOK(notebook_), doc.view->widget());
-    auto it = std::find_if(docs_.begin(), docs_.end(), [&](const auto& p) { return p.get() == &doc; });
-    std::unique_ptr<Document> owned = std::move(*it); // keep alive while GTK detaches it
-    docs_.erase(it);
-    if (page >= 0)
-        gtk_notebook_remove_page(GTK_NOTEBOOK(notebook_), page);
-    owned.reset();
-    if (docs_.empty() && keepOne)
-        newDocument(); // upstream always keeps one document open
-    refreshTitle();
-    refreshStatus();
-    return true;
-}
-
-bool MainWindow::cmdCloseAll()
-{
-    while (!docs_.empty())
-        if (!closeDocument(*docs_.back(), false))
-            return false;
-    newDocument();
-    return true;
-}
-
-// ============================================================================
 // UI refresh
 // ============================================================================
 
-void MainWindow::refreshTab(Document& doc)
+void MainWindow::refreshTab(Tab& t)
 {
-    const std::string label = (doc.isModified() ? "*" : "") + doc.name();
-    gtk_label_set_text(GTK_LABEL(doc.tabText), label.c_str());
-    gtk_widget_set_tooltip_text(doc.tabLabel, doc.isUntitled() ? doc.untitledName.c_str() : doc.path.c_str());
-    gtk_notebook_set_menu_label_text(GTK_NOTEBOOK(notebook_), doc.view->widget(), doc.name().c_str());
+    const core::Buffer& b = *t.buf;
+    const std::string label = (isModified(b) ? "*" : "") + b.name() + (b.userReadOnly ? " [RO]" : "");
+    gtk_label_set_text(GTK_LABEL(t.labelText), label.c_str());
+    gtk_widget_set_tooltip_text(t.label, b.fullName().c_str());
+    gtk_notebook_set_menu_label_text(GTK_NOTEBOOK(notebooks_[t.viewIdx]), t.view->widget(), b.name().c_str());
+}
+
+void MainWindow::refreshBufferTabs(core::Buffer& b)
+{
+    for (Tab* t : tabsOf(b))
+        refreshTab(*t);
 }
 
 void MainWindow::refreshTitle()
 {
     std::string title = "Notepad++";
-    if (Document* d = activeDoc())
-        title = (d->isModified() ? "*" : "") + (d->isUntitled() ? d->untitledName : d->path.string()) + " - Notepad++";
+    if (const core::Buffer* b = activeBuffer())
+        title = (isModified(*b) ? "*" : "") + b->fullName() + " - Notepad++";
     gtk_window_set_title(GTK_WINDOW(window_), title.c_str());
 }
 
 void MainWindow::refreshStatus()
 {
-    Document* d = activeDoc();
-    if (!d) {
+    Tab* t = activeTab();
+    if (!t) {
         for (GtkWidget* l : {stLang_, stStats_, stPos_, stEol_, stEnc_, stIns_})
             gtk_label_set_text(GTK_LABEL(l), "");
         return;
     }
-    EditorView& v = *d->view;
-    const core::Language* lang = v.language();
+    EditorView& v = *t->view;
+    const core::Language* lang = t->buf->language;
     gtk_label_set_text(GTK_LABEL(stLang_), lang ? lang->longName.c_str() : "Normal text file");
 
     char buf[160];
@@ -853,15 +758,35 @@ void MainWindow::refreshStatus()
     gtk_label_set_text(GTK_LABEL(stPos_), buf);
 
     gtk_label_set_text(GTK_LABEL(stEol_), eolLabel(static_cast<int>(v.execute(SCI_GETEOLMODE))));
-    gtk_label_set_text(GTK_LABEL(stEnc_), d->encoding.displayName().c_str());
+    gtk_label_set_text(GTK_LABEL(stEnc_), t->buf->encoding.displayName().c_str());
     gtk_label_set_text(GTK_LABEL(stIns_), v.execute(SCI_GETOVERTYPE) ? "OVR" : "INS");
+}
+
+void MainWindow::refreshAll()
+{
+    syncActionStates();
+    refreshTitle();
+    refreshStatus();
+}
+
+void MainWindow::refreshRecentMenu()
+{
+    if (!recentSection_)
+        return;
+    g_menu_remove_all(recentSection_);
+    const auto& items = recent_.items();
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        // Upstream numbering: 1-9 get a mnemonic.
+        const std::string num = i < 9 ? "_" + std::to_string(i + 1) : std::to_string(i + 1);
+        addTargetItem(recentSection_, num + ": " + escapeMnemonic(items[i]), "win.open-recent", items[i]);
+    }
+    for (const char* name : {"restore-recent", "open-all-recent", "clear-recent"})
+        if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(window_), name))
+            g_simple_action_set_enabled(G_SIMPLE_ACTION(a), !items.empty());
 }
 
 void MainWindow::syncActionStates()
 {
-    Document* d = activeDoc();
-    if (!d)
-        return;
     syncingActions_ = true;
     auto set = [this](const char* name, GVariant* v) {
         if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(window_), name))
@@ -869,10 +794,28 @@ void MainWindow::syncActionStates()
         else
             g_variant_unref(g_variant_ref_sink(v));
     };
-    const core::Language* lang = d->view->language();
-    set("language", g_variant_new_string(lang ? lang->name.c_str() : "normal"));
-    set("encoding", g_variant_new_string(encodingId(d->encoding).c_str()));
-    set("eol", g_variant_new_string(eolId(static_cast<int>(d->view->execute(SCI_GETEOLMODE))).c_str()));
+    if (Tab* t = activeTab()) {
+        const core::Buffer& b = *t->buf;
+        set("language", g_variant_new_string(b.language ? b.language->name.c_str() : "normal"));
+        set("encoding", g_variant_new_string(encodingId(b.encoding).c_str()));
+        set("eol", g_variant_new_string(eolId(static_cast<int>(t->view->execute(SCI_GETEOLMODE))).c_str()));
+        set("read-only", g_variant_new_boolean(b.userReadOnly));
+    }
+    set("word-wrap", g_variant_new_boolean(settings_.wordWrap));
+    set("show-all", g_variant_new_boolean(settings_.showAllChars));
+    set("indent-guides", g_variant_new_boolean(settings_.showIndentGuides));
+    set("theme", g_variant_new_string(settings_.theme.c_str()));
+    set("remember-session", g_variant_new_boolean(settings_.rememberSession));
+    set("snapshot", g_variant_new_boolean(settings_.snapshot));
+    set("save-backup", g_variant_new_string(saveBackupId(settings_.saveBackup)));
+    set("change-detection", g_variant_new_string(changeDetectionId(settings_.changeDetection)));
+    set("replace-tabs", g_variant_new_boolean(settings_.replaceTabsBySpace));
+    set("auto-indent", g_variant_new_boolean(settings_.autoIndent));
+    const bool twoDocs = tabs_.size() > 1;
+    if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(window_), "move-to-other-view"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(a), twoDocs);
+    if (GAction* a = g_action_map_lookup_action(G_ACTION_MAP(window_), "switch-view"))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(a), tabCount(kMainView) > 0 && tabCount(kSubView) > 0);
     syncingActions_ = false;
 }
 
@@ -883,14 +826,42 @@ void MainWindow::applyViewSettings(EditorView& v)
     v.execute(SCI_SETVIEWEOL, settings_.showAllChars);
     v.execute(SCI_SETINDENTATIONGUIDES, settings_.showIndentGuides ? SC_IV_LOOKBOTH : SC_IV_NONE);
     v.execute(SCI_SETZOOM, static_cast<uptr_t>(settings_.zoom));
+    v.execute(SCI_SETTABWIDTH, static_cast<uptr_t>(settings_.tabSize));
+    v.execute(SCI_SETUSETABS, !settings_.replaceTabsBySpace);
+    v.autoIndent = settings_.autoIndent;
 }
 
 void MainWindow::showError(const std::string& primary, const std::string& secondary)
 {
+    if (prompt_) { // tests: no modal dialogs
+        g_warning("%s: %s", primary.c_str(), secondary.c_str());
+        return;
+    }
     GtkWidget* dlg = gtk_message_dialog_new(GTK_WINDOW(window_), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s", primary.c_str());
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dlg), "%s", secondary.c_str());
     gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
+}
+
+MainWindow::Answer MainWindow::ask(const std::string& primary, const std::string& secondary, bool cancellable)
+{
+    if (prompt_)
+        return prompt_(primary, secondary, cancellable);
+    GtkWidget* dlg = gtk_message_dialog_new(GTK_WINDOW(window_), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "%s",
+                                            primary.c_str());
+    if (!secondary.empty())
+        gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dlg), "%s", secondary.c_str());
+    if (cancellable)
+        gtk_dialog_add_button(GTK_DIALOG(dlg), "_Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_add_buttons(GTK_DIALOG(dlg), "_No", GTK_RESPONSE_NO, "_Yes", GTK_RESPONSE_YES, nullptr);
+    gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_YES);
+    const gint r = gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+    if (r == GTK_RESPONSE_YES)
+        return Answer::Yes;
+    if (r == GTK_RESPONSE_NO || !cancellable)
+        return Answer::No;
+    return Answer::Cancel;
 }
 
 // ============================================================================
@@ -907,8 +878,8 @@ void MainWindow::cmdOpen()
 {
     GtkFileChooserNative* dlg = gtk_file_chooser_native_new("Open", GTK_WINDOW(window_), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
     gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER(dlg), TRUE);
-    if (Document* d = activeDoc(); d && !d->isUntitled())
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), d->path.parent_path().c_str());
+    if (core::Buffer* b = activeBuffer(); b && !b->isUntitled())
+        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), b->path.parent_path().c_str());
     else if (!lastDir_.empty())
         gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), lastDir_.c_str());
     if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
@@ -970,15 +941,15 @@ void MainWindow::cmdSetTheme(const std::string& theme)
 {
     settings_.theme = theme;
     loadStyles();
-    for (auto& d : docs_)
-        if (const core::Language* l = d->view->language())
-            setLanguage(*d, *l);
+    for (core::Buffer* b : buffers())
+        if (b->language)
+            setLanguage(*b, *b->language);
 }
 
 void MainWindow::cmdSetEncoding(const std::string& id)
 {
-    Document* d = activeDoc();
-    if (!d)
+    core::Buffer* b = activeBuffer();
+    if (!b)
         return;
     platform::TextEncoding e;
     if (id == "utf-8-bom")
@@ -989,25 +960,140 @@ void MainWindow::cmdSetEncoding(const std::string& id)
         e = {"UTF-16BE", platform::Bom::Utf16BE};
     else
         e = {"UTF-8", platform::Bom::None};
-    if (e == d->encoding)
+    if (e == b->encoding)
         return;
     // Text is held as UTF-8, so this is upstream's "Convert to ...": the bytes
     // on disk change on the next save.
-    d->encoding = e;
-    d->encodingChanged = true;
-    refreshTab(*d);
-    refreshTitle();
+    b->encoding = e;
+    markForcedDirty(*b, true);
     refreshStatus();
 }
 
 void MainWindow::cmdSetEol(const std::string& id)
 {
-    Document* d = activeDoc();
-    if (!d)
+    EditorView* v = activeView();
+    if (!v)
         return;
     const int mode = id == "crlf" ? SC_EOL_CRLF : id == "cr" ? SC_EOL_CR : SC_EOL_LF;
-    d->view->setEolMode(mode, true);
+    v->setEolMode(mode, true);
     refreshStatus();
+}
+
+namespace {
+
+// Runs a native file chooser; returns the chosen path or empty.
+fs::path chooseFile(GtkWindow* parent, const char* title, GtkFileChooserAction action, const char* accept,
+                    const fs::path& folder, const char* pattern, const char* patternName)
+{
+    GtkFileChooserNative* dlg = gtk_file_chooser_native_new(title, parent, action, accept, "_Cancel");
+    if (action == GTK_FILE_CHOOSER_ACTION_SAVE)
+        gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dlg), TRUE);
+    if (!folder.empty())
+        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), folder.c_str());
+    if (pattern) {
+        GtkFileFilter* f = gtk_file_filter_new();
+        gtk_file_filter_set_name(f, patternName);
+        gtk_file_filter_add_pattern(f, pattern);
+        gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), f);
+        GtkFileFilter* all = gtk_file_filter_new();
+        gtk_file_filter_set_name(all, "All files");
+        gtk_file_filter_add_pattern(all, "*");
+        gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), all);
+    }
+    fs::path out;
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT)
+        if (gchar* fn = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg))) {
+            out = fn;
+            g_free(fn);
+        }
+    g_object_unref(dlg);
+    return out;
+}
+
+} // namespace
+
+void MainWindow::cmdLoadSession()
+{
+    const fs::path f = chooseFile(GTK_WINDOW(window_), "Load Session", GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", lastDir_,
+                                  "*.xml", "Session files (*.xml)");
+    std::string err;
+    if (!f.empty() && !loadSession(f, &err))
+        showError("Cannot load session", err);
+}
+
+void MainWindow::cmdSaveSession()
+{
+    const fs::path f = chooseFile(GTK_WINDOW(window_), "Save Session", GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", lastDir_,
+                                  "*.xml", "Session files (*.xml)");
+    std::string err;
+    if (!f.empty() && !saveSession(f, &err))
+        showError("Cannot save session", err);
+}
+
+void MainWindow::cmdImportConfig()
+{
+    const fs::path f = chooseFile(GTK_WINDOW(window_), "Import Notepad++ config.xml", GTK_FILE_CHOOSER_ACTION_OPEN, "_Import",
+                                  platform::userConfigDir(), "config*.xml", "Notepad++ configuration (config.xml)");
+    if (f.empty())
+        return;
+    std::string err;
+    auto cfg = core::readNppConfig(f, &err);
+    if (!cfg) {
+        showError("Cannot import settings", err);
+        return;
+    }
+    const std::string oldTheme = settings_.theme;
+    const int n = core::applyNppConfig(*cfg, settings_);
+    recent_.setMax(static_cast<std::size_t>(std::max(settings_.maxRecentFiles, 0)));
+    recent_.assign(settings_.recentFiles);
+    refreshRecentMenu();
+    if (settings_.theme != oldTheme)
+        cmdSetTheme(settings_.theme);
+    for (auto& t : tabs_)
+        applyViewSettings(*t->view);
+    rewatchAll();
+    restartSnapshotTimer();
+    refreshAll();
+    GtkWidget* dlg = gtk_message_dialog_new(GTK_WINDOW(window_), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+                                            "Imported %d setting%s from %s.", n, n == 1 ? "" : "s", f.filename().c_str());
+    gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+}
+
+void MainWindow::cmdRestoreRecent()
+{
+    if (!recent_.empty())
+        openRecentFile(recent_.items().front());
+}
+
+void MainWindow::cmdOpenAllRecent()
+{
+    std::vector<fs::path> files;
+    for (const std::string& f : recent_.items()) {
+        std::error_code ec;
+        if (fs::is_regular_file(f, ec))
+            files.emplace_back(f);
+    }
+    openFiles(files);
+}
+
+void MainWindow::openRecentFile(const std::string& file)
+{
+    std::error_code ec;
+    if (!fs::is_regular_file(file, ec)) {
+        if (ask("\"" + file + "\" doesn't exist anymore.", "Remove it from the recent files list?", false) == Answer::Yes) {
+            recent_.remove(file);
+            refreshRecentMenu();
+        }
+        return;
+    }
+    openFiles({file});
+}
+
+void MainWindow::showTabMenu(Tab& t, const GdkEvent* ev)
+{
+    activateTab(t); // the menu acts on the active document
+    gtk_menu_popup_at_pointer(GTK_MENU(tabMenu_), ev);
 }
 
 void MainWindow::openUriList(std::string_view uris)
@@ -1042,43 +1128,72 @@ void MainWindow::onStatefulAction(GSimpleAction* a, GVariant* value, gpointer se
     if (w->syncingActions_)
         return;
     const std::string name = g_action_get_name(G_ACTION(a));
-    if (name == "word-wrap" || name == "show-all" || name == "indent-guides") {
+    platform::Settings& st = w->settings_;
+    if (g_variant_is_of_type(value, G_VARIANT_TYPE_BOOLEAN)) {
         const bool on = g_variant_get_boolean(value);
-        (name == "word-wrap" ? w->settings_.wordWrap : name == "show-all" ? w->settings_.showAllChars : w->settings_.showIndentGuides) = on;
-        for (auto& d : w->docs_)
-            w->applyViewSettings(*d->view);
+        if (name == "read-only") {
+            if (core::Buffer* b = w->activeBuffer())
+                w->setReadOnly(*b, on);
+            return;
+        }
+        if (name == "remember-session" || name == "snapshot") {
+            (name == "snapshot" ? st.snapshot : st.rememberSession) = on;
+            w->restartSnapshotTimer();
+            return;
+        }
+        if (name == "word-wrap")
+            st.wordWrap = on;
+        else if (name == "show-all")
+            st.showAllChars = on;
+        else if (name == "indent-guides")
+            st.showIndentGuides = on;
+        else if (name == "replace-tabs")
+            st.replaceTabsBySpace = on;
+        else if (name == "auto-indent")
+            st.autoIndent = on;
+        for (auto& t : w->tabs_)
+            w->applyViewSettings(*t->view);
         return;
     }
     const std::string s = g_variant_get_string(value, nullptr);
     if (name == "language") {
-        if (Document* d = w->activeDoc())
+        if (core::Buffer* b = w->activeBuffer())
             if (const core::Language* l = w->langs_.byName(s))
-                w->setLanguage(*d, *l);
+                w->setLanguage(*b, *l);
     } else if (name == "encoding") {
         w->cmdSetEncoding(s);
     } else if (name == "eol") {
         w->cmdSetEol(s);
     } else if (name == "theme") {
         w->cmdSetTheme(s);
+    } else if (name == "save-backup") {
+        st.saveBackup = s == "simple" ? platform::SaveBackup::Simple : s == "verbose" ? platform::SaveBackup::Verbose : platform::SaveBackup::None;
+    } else if (name == "change-detection") {
+        st.changeDetection = s == "off" ? platform::ChangeDetection::Off : s == "auto" ? platform::ChangeDetection::AutoUpdate : platform::ChangeDetection::Notify;
+        w->rewatchAll();
     }
+}
+
+void MainWindow::onOpenRecent(GSimpleAction*, GVariant* param, gpointer self)
+{
+    static_cast<MainWindow*>(self)->openRecentFile(g_variant_get_string(param, nullptr));
 }
 
 void MainWindow::onSwitchPage(GtkNotebook*, GtkWidget* page, guint, gpointer self)
 {
     auto* w = static_cast<MainWindow*>(self);
     // Called during switch: current page is not updated yet, so resolve by widget.
-    Document* d = w->docForPage(page);
-    if (!d)
+    Tab* t = w->tabForPage(page);
+    if (!t || w->closing_)
         return;
-    gtk_widget_grab_focus(page);
+    if (t->viewIdx == w->activeView_)
+        gtk_widget_grab_focus(page);
     // Defer refresh until GtkNotebook has updated its current page.
     if (!w->refreshIdle_)
         w->refreshIdle_ = g_idle_add(+[](gpointer p) -> gboolean {
             auto* win = static_cast<MainWindow*>(p);
             win->refreshIdle_ = 0;
-            win->syncActionStates();
-            win->refreshTitle();
-            win->refreshStatus();
+            win->refreshAll();
             return G_SOURCE_REMOVE;
         }, w);
 }
@@ -1086,11 +1201,27 @@ void MainWindow::onSwitchPage(GtkNotebook*, GtkWidget* page, guint, gpointer sel
 gboolean MainWindow::onDeleteEvent(GtkWidget*, GdkEvent*, gpointer self)
 {
     auto* w = static_cast<MainWindow*>(self);
-    for (auto& d : w->docs_)
-        if (!w->confirmClose(*d))
-            return TRUE; // cancelled: keep window open
+    if (!w->requestQuit())
+        return TRUE; // cancelled: keep window open
+    // GTK destroys the window next: stop reacting to its widgets.
+    w->closing_ = true;
+    if (gtk_widget_get_visible(w->notebooks_[kSubView]) && gtk_widget_get_visible(w->notebooks_[kMainView]))
+        w->settings_.splitPosition = gtk_paned_get_position(GTK_PANED(w->paned_));
+    w->settings_.recentFiles = w->recent_.items();
     w->settings_.save();
     return FALSE;
+}
+
+void MainWindow::onActiveChanged(GObject*, GParamSpec*, gpointer self)
+{
+    auto* w = static_cast<MainWindow*>(self);
+    if (!gtk_window_is_active(GTK_WINDOW(w->window_)))
+        return;
+    for (const auto& t : w->tabs_)
+        if (t->buf->externalChangePending) {
+            w->scheduleChangeCheck();
+            break;
+        }
 }
 
 gboolean MainWindow::onKeyPress(GtkWidget* widget, GdkEventKey* ev, gpointer)

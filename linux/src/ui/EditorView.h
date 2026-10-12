@@ -18,8 +18,20 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace npp::ui {
+
+// Caret, selection and scroll state — upstream Position (saved per buffer and
+// view, and in session.xml).
+struct ViewPosition {
+    sptr_t firstVisibleLine = 0; // display line
+    sptr_t xOffset = 0;
+    sptr_t startPos = 0;         // anchor
+    sptr_t endPos = 0;           // caret
+    sptr_t selMode = 0;          // SC_SEL_*
+    sptr_t scrollWidth = 1;
+};
 
 class EditorView {
 public:
@@ -66,6 +78,16 @@ public:
     void toggleBookmarkAtCaret() { toggleBookmark(lineFromPos(currentPos())); }
     bool gotoNextBookmark(bool forward); // wraps around; false if none
 
+    ViewPosition position() const;
+    // Safe to call before the widget is mapped: scrolling is re-applied once
+    // it has a size. Positions are clamped to the current text.
+    void restorePosition(const ViewPosition& pos);
+
+    std::vector<sptr_t> bookmarkLines() const;
+    void setBookmarks(const std::vector<sptr_t>& lines);
+    std::vector<sptr_t> contractedFoldLines() const;
+    void contractFolds(const std::vector<sptr_t>& headerLines);
+
     // Upstream Preferences > Auto-Indent ("basic" mode), on by default.
     bool autoIndent = true;
 
@@ -73,6 +95,8 @@ public:
     std::function<void()> onUpdateUI;                 // caret/selection/content moved
     std::function<void(bool modified)> onSavePoint;   // save point reached/left
     std::function<void(std::string_view uriList)> onUriDropped;
+    std::function<void()> onTextModified;             // text inserted or deleted
+    std::function<void()> onFocusIn;
 
 private:
     static void onNotify(GtkWidget*, gint, gpointer notification, gpointer self);
@@ -90,6 +114,8 @@ private:
     const core::Language* lang_ = nullptr;
     int lineNumberDigits_ = 0;
     bool centreOnMap_ = false;
+    sptr_t pendingFirstLine_ = -1;  // restorePosition() before the widget had a size
+    sptr_t pendingXOffset_ = 0;
 };
 
 // Maps Windows-only font names in Notepad++ themes to a font that exists on

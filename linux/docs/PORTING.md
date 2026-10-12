@@ -1,9 +1,10 @@
 # Notepad++ native Linux port — architecture and plan
 
-Status: **groundwork / preview** (October 2026, upstream 8.9.8.1 at
-`946f002`). This document records what the survey of the upstream source
-found, the architecture chosen, what the skeleton already does, and a phased
-plan to feature parity.
+Status: **preview** — Phase 0 and Phase 2 (documents and sessions) done;
+Phase 1 (upstream core extraction) not started, as it needs upstream PRs
+(October 2026, upstream 8.9.8.1 at `946f002`). This document records what the survey of the
+upstream source found, the architecture chosen, what the port already does,
+and a phased plan to feature parity.
 
 1. [Findings](#1-findings)
 2. [Strategy](#2-strategy)
@@ -144,10 +145,10 @@ flowchart TB
         DATA["langs.model.xml · stylers.model.xml · installer/themes"]
     end
     subgraph port["linux/src — the port"]
-        CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup"]
-        PLAT["platform/ — OS services<br/>Paths (XDG) · TextCodec (uchardet+iconv) · Settings"]
-        UI["ui/ — GTK 3<br/>EditorView · MainWindow · FindBar"]
-        MAIN["main.cpp — CLI (-n -c -l -ro)"]
+        CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup<br/>Buffer · FileManager · Session · RecentFiles · NppConfig"]
+        PLAT["platform/ — OS services<br/>Paths (XDG) · TextCodec (uchardet+iconv) · Settings<br/>FileIO (GIO) · FileMonitor (inotify)"]
+        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · FindBar"]
+        MAIN["main.cpp — CLI, single instance (D-Bus)"]
     end
     DATA --> CORE
     PUG --> CORE
@@ -164,8 +165,8 @@ flowchart TB
 
 | Layer | Contains | Depends on | Windows equivalent |
 |---|---|---|---|
-| `core/` | Language and style catalogues, lexer keyword plans | pugixml, generated tables | parts of `Parameters`, `ScintillaEditView::set*Lexer` |
-| `platform/` | Paths, encoding conversion, settings storage | GLib, uchardet | `GetModuleFileName`, `%APPDATA%`, `MultiByteToWideChar`, registry |
+| `core/` | Language and style catalogues, lexer keyword plans, buffers, load/save and backups, `session.xml`, recent files, `config.xml` import | pugixml, generated tables, `platform/` | parts of `Parameters`, `ScintillaEditView::set*Lexer`, `Buffer`/`FileManager`, `lastRecentFileList` |
+| `platform/` | Paths, encoding conversion, file I/O, file monitoring, settings storage | GLib/GIO, uchardet | `GetModuleFileName`, `%APPDATA%`, `MultiByteToWideChar`, `CreateFile`, `ReadDirectoryChangesW`, registry |
 | `ui/` | Widgets and windows | GTK, Scintilla GTK, core, platform | `WinControls/`, `Notepad_plus_Window` |
 
 `core/` must stay free of GTK and Win32 includes. That is what lets it later
@@ -207,7 +208,64 @@ message instead of silently replacing characters.
 
 **Configuration compatibility**: user overrides use upstream file names
 (`~/.config/notepad-plus-plus-gtk/{langs.xml,stylers.xml,themes/}`), so a
-`stylers.xml` or theme copied from a Windows installation works as-is.
+`stylers.xml` or theme copied from a Windows installation works as-is. A
+Windows `config.xml` placed there is imported on first start (or later via
+Settings ▸ Import): session and backup options, auto-detection, tab
+settings, auto-indent, wrap/whitespace/indent guides/zoom, the theme (if
+installed) and recent files that exist on this system. The port stores its
+own settings in `settings.ini`; `config.xml` is only read.
+
+**Documents and views** (Phase 2): a `core::Buffer` is a document
+independent of the views showing it, as upstream's `Buffer`. Upstream swaps
+one Scintilla document in and out of each of its two views with
+`SCI_SETDOCPOINTER`; the port gives every tab its own Scintilla widget, and
+a clone (the same buffer in both views) shares the Scintilla document
+through the same call. Undo history, markers (bookmarks), save point, lexer
+state and read-only flag are therefore shared, while caret, scroll and fold
+state stay per view, which is what upstream gets by saving and restoring
+`Position` on every switch. Modified state is the document save point plus
+`Buffer::forcedDirty` for changes without an undoable edit (encoding
+conversion, text restored from a snapshot). A view that loses its last tab
+is hidden, and focus moves to the other, as upstream.
+
+**Sessions** (`core/Session`): reads and writes upstream's `session.xml`
+schema attribute for attribute (`firstVisibleLine`, `startPos`/`endPos`,
+`selMode`, `lang` menu names, `encoding` as a Windows code page,
+`backupFilePath`, `originalFileLastModifTimestamp`/`High` as FILETIME,
+`Mark`/`Fold` children), including attributes the port does not use yet
+(tab colour, pinning, RTL, document map), and keeps
+`session.xml.inCaseOfCorruption.bak` like upstream. The same file in both
+views restores as a clone. Entries whose file is gone are dropped
+(upstream's default `KeepSessionAbsentFileEntries` off).
+
+**Snapshots and periodic backup**: with "Remember current session" and
+"Session snapshot and periodic backup" on (upstream defaults), unsaved text
+is written every 7 s (`snapshotIntervalMs`) to
+`~/.config/notepad-plus-plus-gtk/backup/<name>@<timestamp>`, followed by
+`session.xml` (skipped when nothing changed). Exiting then asks nothing;
+the next start restores the documents dirty. Snapshot paths read from
+`session.xml` must lie inside that folder, as upstream confines
+`backupFilePath`. A snapshot of a named file remembers the file's
+modification time, so edits made outside meanwhile are reported on restore.
+"Backup on save" (simple `.bak` or verbose `nppBackup/…<timestamp>.bak`)
+follows upstream naming.
+
+**Outside changes**: each named buffer has a `GFileMonitor`. Events are
+filtered by comparing (mtime, size) with the state recorded at load/save,
+so the editor's own saves do not count. Questions are asked when the window
+is active (upstream behaviour), with upstream's wording; "Update silently"
+reloads unmodified documents without asking. Reload keeps caret and scroll
+positions in every view.
+
+**Single instance**: `GtkApplication` owns the D-Bus name
+`org.notepad_plus_plus.NotepadPlusPlusGtk`; a later invocation forwards its
+argument list and working directory (`G_APPLICATION_HANDLES_COMMAND_LINE`)
+and exits with the primary's status, so `-n`, `-c`, `-l` and `-ro` apply in
+the running window and relative paths resolve where the user typed them.
+`-multiInst` starts a separate process; as upstream (`winmain.cpp`), it runs
+without a session when another instance exists (checked with
+`NameHasOwner`). With no session bus (containers, CI) the editor simply runs
+on its own.
 
 ---
 
@@ -215,9 +273,16 @@ message instead of silently replacing characters.
 
 | Area | Status |
 |---|---|
-| Tabs | ✅ new/open/close, reorder, close button, middle-click close, Ctrl+Tab, tab list menu |
-| Files | ✅ open (multi), save, save as, save all, reload, close all, drag-and-drop, "new 1" replacement, unsaved-changes prompts, permissions-preserving atomic save (GIO) |
-| Command line | ✅ files, `-n<line>` `-c<col>` `-l<lang>` `-ro`; upstream-only switches accepted |
+| Tabs | ✅ new/open/close, reorder, close button, middle-click close, Ctrl+Tab, tab list menu, context menu (close, close others, copy path/name/dir, open containing folder, read-only, move/clone) |
+| Views | ✅ two views side by side; Move / Clone to Other View, Switch to Other View (F8); clones share the document; an empty view hides; split position persisted |
+| Files | ✅ open (multi), save, save as, save all, reload (keeps positions), close all, close all but active, drag-and-drop, "new 1" replacement, unsaved-changes prompts, permissions-preserving atomic save (GIO), Edit ▸ Read-Only, Copy to Clipboard (path, name, dir) |
+| Sessions | ✅ last session restored at start and saved at exit (`session.xml`, upstream format, both views, positions, bookmarks, folds, language, encoding, read-only); File ▸ Load/Save Session |
+| Backup | ✅ session snapshot and periodic backup of unsaved documents (restored dirty, no exit prompt); backup on save (simple / verbose, custom directory via settings) |
+| Recent files | ✅ File menu history (closed files, max 10 or `config.xml` value), Restore Recent Closed File (Ctrl+Shift+T), Open All, Empty list; missing files offered for removal |
+| External change detection | ✅ `GFileMonitor`: ask to reload (with or without local changes), update silently, deleted-file prompt; Settings ▸ File Status Auto-Detection |
+| Single instance | ✅ D-Bus (GApplication): files and switches go to the running window; `-multiInst`, `-nosession` |
+| Settings import | ✅ Windows `config.xml` (automatic on first run, or Settings ▸ Import) |
+| Command line | ✅ files, `-n<line>` `-c<col>` `-l<lang>` `-ro` `-multiInst` `-nosession`; other upstream switches accepted |
 | Syntax highlighting | ✅ all 95 upstream languages via Lexilla, upstream keyword lists and colours |
 | Themes | ✅ `stylers.model.xml` + all 22 upstream themes (Settings ▸ Theme), user `stylers.xml`; GTK chrome follows dark themes |
 | Encodings | ✅ detect BOM / UTF-8 / legacy (uchardet); convert to UTF-8, UTF-8-BOM, UTF-16 LE/BE BOM |
@@ -225,21 +290,18 @@ message instead of silently replacing characters.
 | Search | ✅ find/replace bar: match case, whole word, Boost regex, wrap, Replace / Replace All (one undo step) |
 | Editing | ✅ folding (box tree), brace match, auto-indent, toggle line comment (Ctrl+Q), duplicate/delete/move lines, case conversion, multi-caret and column selection, bookmarks (Ctrl+F2/F2), go to line (Ctrl+G), zoom |
 | View | ✅ word wrap, show all characters, indent guides, status bar (language, length/lines, Ln/Col/Sel, EOL, encoding, INS/OVR) |
-| Settings | ✅ theme, view toggles, zoom, window geometry persisted (`settings.ini`) |
+| Settings | ✅ theme, view toggles, zoom, tab size / replace by spaces, auto-indent, backup and session options, auto-detection mode, window geometry persisted (`settings.ini`) |
 | Packaging | ✅ CPack `.deb`, debhelper source package, Docker build/runtime, desktop file, icons, man page |
-| Split view / clone document | ❌ Phase 2 |
-| Sessions, backup/snapshot, recent files | ❌ Phase 2 |
-| External change detection | ❌ Phase 2 (`GFileMonitor`) |
+| Dragging tabs between views, tab pinning/colours, renaming untitled tabs | ❌ later (session attributes are already kept) |
 | Find in Files, Mark, Count, results panel | ❌ Phase 3 |
 | Macros, Run menu, shortcut mapper | ❌ Phase 3 |
-| Auto-completion, call tips, smart highlighting, tag matching | ❌ Phase 1–2 (code is portable) |
+| Auto-completion, call tips, smart highlighting, tag matching | ❌ Phase 1 (code is portable) |
 | User Defined Languages | ❌ Phase 3 (lexer already compiled in) |
 | Docking panels (Function List, Folder as Workspace, Document Map, Doc List, Char panel, Clipboard History, Project) | ❌ Phase 4 |
 | Preferences, Style Configurator dialogs | ❌ Phase 3 |
 | Localization (`nativeLang`) | ❌ Phase 3 |
 | Printing | ❌ Phase 3 (`GtkPrintOperation` + `SCI_FORMATRANGE`) |
 | Plugins | ❌ Phase 5 (§7) |
-| Single instance (open in running window) | ❌ Phase 2 (GApplication D-Bus) |
 
 ---
 
@@ -247,24 +309,26 @@ message instead of silently replacing characters.
 
 | Upstream (PowerEditor/src) | Port location | Notes |
 |---|---|---|
-| `winmain.cpp` | `src/main.cpp` | CLI parsing compatible with upstream switches |
+| `winmain.cpp` | `src/main.cpp` | CLI parsing compatible with upstream switches; single instance through D-Bus instead of `FindWindow` + `WM_COPYDATA` |
 | `Notepad_plus_Window.*` | `ui/MainWindow` | |
 | `Notepad_plus.*`, `NppCommands.cpp`, `NppBigSwitch.cpp` | `ui/MainWindow` commands → later `core/Commands` | menu command IDs from `menuCmdID.h` become GAction names; keep IDs for `shortcuts.xml`/macro compatibility |
-| `NppIO.cpp` | `ui/MainWindow::{openFiles,save,…}` | |
-| `ScintillaComponent/ScintillaEditView.*` | `ui/EditorView` + `core/LexerSetup` | `execute()` seam kept |
-| `ScintillaComponent/Buffer.*` | Phase 2: `core/Buffer` | one view per tab today; upstream shares documents between two views via `SCI_SETDOCPOINTER` |
+| `NppIO.cpp` | `ui/MainWindowDocs.cpp` (`openFiles`, `save`, `closeTab`, `loadSession`, `requestQuit`) + `core/FileManager` | |
+| `ScintillaComponent/ScintillaEditView.*` | `ui/EditorView` + `core/LexerSetup` | `execute()` seam kept; `position()`/`restorePosition()` mirror upstream `Position` |
+| `ScintillaComponent/Buffer.*` | `core/Buffer` + `core/FileManager` | widget per tab; clones share the Scintilla document via `SCI_SETDOCPOINTER` |
+| `Notepad_plus.cpp` (`loadSession`, `getCurrentOpenedFiles`, `docGotoAnotherEditView`, `checkModifiedDocument`) | `ui/MainWindowDocs.cpp` | |
+| `MISC/Common/lastRecentFileList`, `Parameters` (History) | `core/RecentFiles` | upstream semantics: closed files enter, opened files leave |
 | `ScintillaComponent/FindReplaceDlg.*` | `ui/FindBar` (engine functions) | dialog features in Phase 3 |
 | `ScintillaComponent/AutoCompletion.*`, `FunctionCallTip.*` | Phase 1: compile into `core/` | reads `autoCompletion/*.xml` |
 | `ScintillaComponent/SmartHighlighter.*`, `xmlMatchedTagsHighlighter.*` | Phase 1: compile into `core/` | `execute()` only |
 | `ScintillaComponent/UserDefineDialog.*` | Phase 3 | `LexUser.cxx` already builds (empty `windows.h` shim) |
-| `Parameters.*` | `core/*Catalog` + `platform/Settings` → Phase 2: share the XML model | `config.xml`, `session.xml`, `shortcuts.xml` compatibility |
+| `Parameters.*` | `core/*Catalog`, `core/Session` (`session.xml`), `core/NppConfig` (`config.xml` import), `platform/Settings` | `shortcuts.xml` in Phase 3 |
 | `Utf8_16.*`, `EncodingMapper.*` | `platform/TextCodec` | |
 | `MISC/Common/*` | `platform/` | paths, string conversion, file helpers |
 | `WinControls/TabBar` | `GtkNotebook` | |
 | `WinControls/StatusBar` | `ui/MainWindow` status fields | |
 | `WinControls/ToolBar` | `GtkToolbar` | upstream icon sets later (`icons/`) |
 | `WinControls/OpenSaveFileDialog` | `GtkFileChooserNative` | portal-aware (Flatpak/Snap-ready) |
-| `WinControls/ReadDirectoryChanges` | Phase 2: `GFileMonitor` (inotify) | |
+| `WinControls/ReadDirectoryChanges` | `platform/FileMonitor` (`GFileMonitor`, inotify) | |
 | `WinControls/DockingWnd` | Phase 4: dock manager | see §2.2 |
 | `WinControls/Preference` | Phase 3: GtkBuilder dialog | biggest single dialog (8.4 k lines) |
 | `WinControls/shortcut` | Phase 3: accel map from `shortcuts.xml` | |
@@ -297,11 +361,16 @@ upstream can accept:
 - Exit: smart highlighting, tag matching, auto-completion and call tips work on
   Linux through upstream code.
 
-**Phase 2 — documents and sessions.** Port `Buffer`/`FileManager` (documents
-independent of views), two views with clone and move-to-other-view,
-`session.xml`, backup/snapshot, recent files, `GFileMonitor` change
-detection, single instance through GApplication D-Bus activation. Read
-`config.xml` so Windows settings can be imported.
+**Phase 2 — documents and sessions (done).** `Buffer`/`FileManager`
+(documents independent of views), two views with clone and
+move-to-other-view, `session.xml`, backup/snapshot, recent files,
+`GFileMonitor` change detection, single instance through GApplication
+D-Bus, `config.xml` import. See §3 "Key mechanisms" for the design. Left for
+later: dragging tabs between views, tab pinning and colours, renaming
+untitled tabs, `KeepSessionAbsentFileEntries`, a "Recent Files" submenu
+option, and reloading with a chosen encoding (Encoding ▸ Character sets);
+the Backup and Auto-Detection options move into the Preferences dialog in
+Phase 3.
 
 **Phase 3 — dialogs.** Find/Replace dialog (Find in Files with GIO, Mark,
 Count, results panel), Preferences, Style Configurator, Shortcut Mapper
@@ -391,8 +460,23 @@ one-line upstream PR:
   backreferences, invalid patterns, `^` empty matches), wrap-around search,
   toggle comment, auto-indent, EOL detection, bookmarks, and parsing of every
   bundled theme.
-- `app_launch`: starts the real application with a file and `-n3`, then
-  exits after 1.5 s.
+- `documents_and_sessions`: recent-files semantics, code page mapping,
+  FILETIME round trip, `session.xml` write/read round trip, snapshot path
+  confinement, backup-on-save naming, `config.xml` import; then a live
+  `MainWindow` with scripted answers to its questions: clones share one
+  document and close without asking, move/switch views, empty views hide,
+  close/cancel prompts, recent list on close and restore, read-only, a
+  two-view session round trip (positions, bookmarks, clone, active view),
+  dropped missing files, snapshots restored dirty with no exit prompt and
+  removed on save/close, exit prompts without snapshots, outside changes
+  (own saves ignored, reload keeps the caret, decline, silent update,
+  deleted file), and legacy code pages kept across sessions.
+- `app_launch`: starts the real application (`-multiInst`) with a file and
+  `-n3`, then exits after 1.5 s through the normal exit path.
+- `single_instance`: on a private bus from `dbus-run-session`, a second
+  invocation with a relative path hands over in well under a second and the
+  file shows up in the primary's session; a `-multiInst` instance must not
+  write the session. Skipped without `dbus-run-session`.
 - `app_version`: CLI smoke test.
 
 As upstream code moves into the shared core (Phase 1), its behaviour gets
