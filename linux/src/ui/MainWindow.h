@@ -22,7 +22,16 @@
 #include "core/Translator.h"
 #include "platform/FileMonitor.h"
 #include "platform/Settings.h"
+#include "core/FunctionParser.h"
+#include "ui/CharPanel.h"
+#include "ui/ClipboardHistoryPanel.h"
 #include "ui/Commands.h"
+#include "ui/DockManager.h"
+#include "ui/DocListPanel.h"
+#include "ui/DocumentMap.h"
+#include "ui/FolderPanel.h"
+#include "ui/FunctionListPanel.h"
+#include "ui/ProjectPanel.h"
 #include "ui/EditorView.h"
 #include "ui/FindBar.h"
 #include "ui/FindDialog.h"
@@ -30,6 +39,7 @@
 
 #include <gtk/gtk.h>
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -144,6 +154,18 @@ public:
     FindDialog& findDialog() { return *findDlg_; }
     SearchResults& searchResults() { return *results_; }
     FindBar& incrementalSearch() { return *findBar_; }
+
+    // ---- Docking panels (MainWindowPanels.cpp) --------------------------------
+    DockManager& dock() { return *dock_; }
+    FunctionListPanel& functionList() { return *funcList_; }
+    FolderPanel& folderPanel() { return *folder_; }
+    DocumentMap& documentMap() { return *docMap_; }
+    DocListPanel& documentList() { return *docList_; }
+    CharPanel& charPanel() { return *charPanel_; }
+    ClipboardHistoryPanel& clipboardHistory() { return *clipHistory_; }
+    ProjectPanel& projectPanel(int n) { return *projects_[static_cast<std::size_t>(n - 1)]; }
+    // Panel IDs as in the dock: "functionList", "folderAsWorkspace", ...
+    static constexpr const char* kSearchResultsPanel = "searchResults";
     void showSearchResults(bool show);
     // Opens a search result: the file (if needed), then selects the hit.
     void openResult(const ResultLocation& loc);
@@ -300,6 +322,17 @@ private:
     void cmdPreferences();
     void cmdColumnEditor();
 
+    // Docking panels (MainWindowPanels.cpp)
+    GtkWidget* buildPanels(GtkWidget* center); // returns the dock's root
+    void registerPanelCommands();
+    void refreshPanels();           // the active document or its state changed
+    void refreshDocList();
+    void onPanelShown(const std::string& id, bool shown);
+    void restorePanels();           // docking layout, workspaces (settings)
+    void savePanels();
+    void togglePanel(const char* id);
+    void findInProjects(const std::vector<std::filesystem::path>& files);
+
     // Signal trampolines
     static void onStatefulAction(GSimpleAction* a, GVariant* value, gpointer self);
     static void onOpenRecent(GSimpleAction* a, GVariant* param, gpointer self);
@@ -332,11 +365,21 @@ private:
     GtkWidget* toolbar_ = nullptr;
     GtkWidget* statusBar_ = nullptr;
     GtkWidget* paned_ = nullptr;
-    GtkWidget* resultsPaned_ = nullptr; // editors above, search results below
     GtkWidget* notebooks_[2] = {nullptr, nullptr};
     std::unique_ptr<FindBar> findBar_;      // Search > Incremental Search
     std::unique_ptr<SearchResults> results_;
     std::unique_ptr<FindDialog> findDlg_;
+    core::FunctionParsers funcParsers_;
+    std::unique_ptr<DockManager> dock_;
+    std::unique_ptr<FunctionListPanel> funcList_;
+    std::unique_ptr<FolderPanel> folder_;
+    std::unique_ptr<DocumentMap> docMap_;
+    std::unique_ptr<DocListPanel> docList_;
+    std::unique_ptr<CharPanel> charPanel_;
+    std::unique_ptr<ClipboardHistoryPanel> clipHistory_;
+    std::array<std::unique_ptr<ProjectPanel>, 3> projects_;
+    const EditorView* panelSource_ = nullptr; // what the document panels show
+    std::string panelKey_;                    // document + language the Function List shows
     GtkWidget* stLang_ = nullptr;
     GtkWidget* stStats_ = nullptr;
     GtkWidget* stPos_ = nullptr;

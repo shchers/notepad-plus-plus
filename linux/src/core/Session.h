@@ -40,10 +40,20 @@ struct SessionFile {
     bool operator==(const SessionFile&) const = default;
 };
 
+// Folder as Workspace state (upstream <FileBrowser>, written when the panel is open).
+struct FileBrowserRoot {
+    std::string folder;
+    std::vector<std::string> expanded; // expanded sub-folders (full paths)
+    bool operator==(const FileBrowserRoot&) const = default;
+};
+
 struct Session {
     int activeView = 0;            // 0 = main, 1 = sub
     std::size_t activeIndex[2] = {0, 0};
     std::vector<SessionFile> views[2];
+    bool includeFileBrowser = false;
+    std::vector<FileBrowserRoot> fileBrowserRoots;
+    std::string fileBrowserSelected;
 
     bool empty() const { return views[0].empty() && views[1].empty(); }
     bool operator==(const Session&) const = default;

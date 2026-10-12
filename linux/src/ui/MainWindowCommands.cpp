@@ -217,6 +217,7 @@ void MainWindow::registerCommands()
     registerFormatCommands();
     registerOtherCommands();
     registerMacroCommands();
+    registerPanelCommands();
 }
 
 void MainWindow::registerFileCommands()
@@ -489,7 +490,7 @@ void MainWindow::registerSearchCommands()
     cmds_.add(IDM_FOCUS_ON_FOUND_RESULTS, [this] {
         // Upstream F7: to the results, and back to the document.
         GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(window_));
-        if (gtk_widget_get_visible(results_->widget()) && focus && gtk_widget_is_ancestor(focus, results_->widget())) {
+        if (dock_->isShown(kSearchResultsPanel) && focus && gtk_widget_is_ancestor(focus, results_->widget())) {
             if (EditorView* v = activeView())
                 gtk_widget_grab_focus(v->widget());
             return;
@@ -1233,6 +1234,8 @@ void MainWindow::cmdSetTheme(const std::string& theme)
     settings_.theme = theme;
     loadStyles();
     results_->applyStyles(styles_);
+    panelSource_ = nullptr; // the Document Map takes the new styles
+    refreshPanels();
     for (core::Buffer* b : buffers())
         reapplyLanguage(*b);
 }

@@ -26,22 +26,6 @@ SearchResults::SearchResults(const core::Translator& tr) : tr_(tr)
     box_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     g_object_ref_sink(box_);
 
-    GtkWidget* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    GtkWidget* title = gtk_label_new(tr_.misc("find-result-caption", "Search results").c_str());
-    gtk_label_set_xalign(GTK_LABEL(title), 0);
-    gtk_widget_set_margin_start(title, 6);
-    gtk_box_pack_start(GTK_BOX(header), title, TRUE, TRUE, 0);
-    GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
-    gtk_button_set_relief(GTK_BUTTON(close), GTK_RELIEF_NONE);
-    gtk_widget_set_tooltip_text(close, "Close");
-    g_signal_connect(close, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
-                         auto* self = static_cast<SearchResults*>(p);
-                         if (self->onClose)
-                             self->onClose();
-                     }), this);
-    gtk_box_pack_end(GTK_BOX(header), close, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_), header, FALSE, FALSE, 0);
-
     view_.showLineNumbers = false;
     view_.execute(SCI_SETMARGINWIDTHN, 0, 0);
     view_.execute(SCI_SETMARGINWIDTHN, 1, 0);

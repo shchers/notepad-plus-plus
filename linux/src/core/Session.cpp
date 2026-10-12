@@ -79,6 +79,19 @@ bool readSession(const std::filesystem::path& file, Session& out, std::string* e
             out.views[k].push_back(std::move(sf));
         }
     }
+    if (const pugi::xml_node fb = root.child("FileBrowser")) {
+        out.includeFileBrowser = true;
+        out.fileBrowserSelected = fb.attribute("latestSelectedItem").as_string();
+        for (const pugi::xml_node r : fb.children("root")) {
+            FileBrowserRoot fr{r.attribute("foldername").as_string(), {}};
+            if (fr.folder.empty())
+                continue;
+            for (const pugi::xml_node e : r.children("expanded"))
+                if (const char* p = e.attribute("path").as_string(); *p)
+                    fr.expanded.emplace_back(p);
+            out.fileBrowserRoots.push_back(std::move(fr));
+        }
+    }
     return true;
 }
 
@@ -119,6 +132,16 @@ bool writeSession(const std::filesystem::path& file, const Session& s, std::stri
                 f.append_child("Mark").append_attribute("line") = static_cast<long long>(l);
             for (const std::int64_t l : sf.folds)
                 f.append_child("Fold").append_attribute("line") = static_cast<long long>(l);
+        }
+    }
+    if (s.includeFileBrowser) {
+        pugi::xml_node fb = session.append_child("FileBrowser");
+        fb.append_attribute("latestSelectedItem") = s.fileBrowserSelected.c_str();
+        for (const FileBrowserRoot& r : s.fileBrowserRoots) {
+            pugi::xml_node n = fb.append_child("root");
+            n.append_attribute("foldername") = r.folder.c_str();
+            for (const std::string& e : r.expanded)
+                n.append_child("expanded").append_attribute("path") = e.c_str();
         }
     }
 

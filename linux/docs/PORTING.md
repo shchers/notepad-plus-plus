@@ -101,13 +101,17 @@ The skeleton uses **GTK 3**:
 - GtkApplication, GAction and GtkBuilder map well onto Notepad++'s
   command-ID-and-menu model.
 
-Known costs, to revisit at **Phase 4** (docking panels):
+Known costs, revisited at **Phase 4** (docking panels):
 
 - **No docking framework in GTK.** Notepad++'s panels (Function List, Folder
-  as Workspace, Document Map, Project panels) need a dock manager. Options:
-  `libgdl` (unmaintained), a custom `GtkPaned`-based dock (simpler than it
-  sounds, since upstream's own `DockingWnd` is custom too), or switching
-  toolkit.
+  as Workspace, Document Map, Project panels) need a dock manager. Options
+  were `libgdl` (unmaintained), a custom `GtkPaned`-based dock (upstream's
+  own `DockingWnd` is custom too), or switching toolkit. **Decision (Phase
+  4): the custom dock** (`ui/DockManager`, §3). Four sides of nested
+  `GtkPaned`s, each a `GtkNotebook` in one tab group: GTK's own tab
+  drag-and-drop moves a panel between sides, and dropping it outside the
+  window floats it, which covers what upstream's gripper does in about 500
+  lines. GTK 3 stays.
 - **GTK 3 is in maintenance mode**; Scintilla has no GTK 4 backend yet.
 - **Qt** (Scintilla has a Qt backend, `scintilla/qt`) would give
   `QDockWidget`, `QTabBar`, rich model/view widgets and a macOS path, at the
@@ -142,13 +146,13 @@ flowchart TB
         BRX["boostregex/ (SCI_OWNREGEX)"]
         PUG["PowerEditor/src/pugixml"]
         UCD["PowerEditor/src/uchardet"]
-        DATA["langs.model.xml · stylers.model.xml · installer/themes<br/>installer/nativeLang · bin/userDefineLangs"]
+        DATA["langs.model.xml · stylers.model.xml · installer/themes<br/>installer/nativeLang · bin/userDefineLangs · installer/functionList"]
         IDS["menuCmdID.h · resource.h · FindReplaceDlg_rc.h<br/>Parameters.cpp winKeyDefs · NppCommands.cpp"]
     end
     subgraph port["linux/src — the port"]
-        CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup · UserLanguage<br/>Buffer · FileManager · Session · RecentFiles · NppConfig<br/>SearchEngine · FileSearch · EditOps · Shortcuts · Macro · Translator"]
+        CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup · UserLanguage<br/>Buffer · FileManager · Session · RecentFiles · NppConfig<br/>SearchEngine · FileSearch · EditOps · Shortcuts · Macro · Translator<br/>FunctionParser · Workspace"]
         PLAT["platform/ — OS services<br/>Paths (XDG) · TextCodec (uchardet+iconv) · Settings<br/>FileIO (GIO) · FileMonitor (inotify)"]
-        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator"]
+        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator<br/>DockManager · Function List · Folder as Workspace · Document Map · Document List<br/>Character Panel · Clipboard History · Project Panels"]
         MAIN["main.cpp — CLI, single instance (D-Bus)"]
     end
     DATA --> CORE
@@ -268,6 +272,39 @@ order: a UDL's extensions (the dark or light variant matching the theme),
 then the Style Configurator's "User ext.", then the built-in languages.
 Sessions store a UDL by name, as upstream.
 
+**Docking panels** (`ui/DockManager`, Phase 4): see §2.2 for the choice.
+Each side shows its panels as notebook pages with upstream's caption bar
+(title, a menu to dock to another side or float, close) and tabs underneath
+when there are several. The layout (side, order, shown, floating window
+geometry, side sizes) is kept in `settings.ini` `[Docking]`, as upstream
+keeps it in `config.xml`. The search results are a panel too, docked at the
+bottom. Panels follow the active document: the Function List re-parses a
+second after typing stops, the Document Map shares the editor's Scintilla
+document (`SCI_SETDOCPOINTER`) and draws upstream's view zone on an overlay
+(markers or indicators would show in the editor too), the Document List
+tracks tabs and their modified state, the Character Panel the document's
+code page.
+
+**Function List** (`core/FunctionParser`): upstream's `functionParser.cpp`
+ported to `core::Sci`; it already reached Scintilla only through
+`searchInTarget`, so the zone / unit / mixed parsers, comment zones and
+nested class scans are the same code paths with the same Boost regex flags.
+Rules are upstream's `functionList/*.xml` with `overrideMap.xml`
+(language IDs map onto the generated language table, which is in
+`LangType` order); the user's `functionList/` folder overrides the shipped
+one. The 42 fixtures of upstream's own unit test
+(`PowerEditor/Test/FunctionList`) run in the test suite and produce
+exactly upstream's expected JSON.
+
+**Folder as Workspace and Project Panels**: folders are listed lazily and
+refreshed through `GFileMonitor`, and the roots, expanded folders and
+selection go into `session.xml` `<FileBrowser>` in upstream's format, so a
+session from Windows restores them (paths permitting). Project Panels read
+and write upstream `.workspace` files (`core/Workspace`), with file names
+relative to the workspace and Windows backslashes accepted; each panel's
+workspace file is remembered, and a changed workspace is offered for saving
+on exit.
+
 **Dialogs**: Find/Replace, Shortcut Mapper, Preferences, Style
 Configurator, Run, Column Editor and Run a Macro Multiple Times are built
 in C++ rather than from GtkBuilder `.ui` files as first planned: every label
@@ -381,7 +418,7 @@ on its own.
 | UDL editor ("Define your language…"), Find Characters in Range, Hide Lines, synchronized scrolling, Monitoring (tail -f), text direction | ❌ later (see Phase 3 "left for later") |
 | Encoding ▸ ANSI | ➖ left out: "ANSI" is the system code page, UTF-8 on Linux, where upstream does nothing for it; Character Set covers legacy encodings |
 | Auto-completion, call tips, smart highlighting, tag matching | ❌ Phase 1 (code is portable) |
-| Docking panels (Function List, Folder as Workspace, Document Map, Doc List, Char panel, Clipboard History, Project) | ❌ Phase 4 |
+| Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom |
 | Plugins | ❌ Phase 5 (§7) |
 
 ---
@@ -418,7 +455,14 @@ on its own.
 | `WinControls/ToolBar` | `GtkToolbar` | upstream icon sets later (`icons/`) |
 | `WinControls/OpenSaveFileDialog` | `GtkFileChooserNative` | portal-aware (Flatpak/Snap-ready) |
 | `WinControls/ReadDirectoryChanges` | `platform/FileMonitor` (`GFileMonitor`, inotify) | |
-| `WinControls/DockingWnd` | Phase 4: dock manager | see §2.2 |
+| `WinControls/DockingWnd` (`DockingManager`, `DockingCont`, `Gripper`) | `ui/DockManager` | GtkPaned + GtkNotebook tab groups, §2.2 |
+| `WinControls/FunctionList` (`functionParser`, `functionListPanel`) | `core/FunctionParser`, `ui/FunctionListPanel` | parser ported unchanged in logic |
+| `WinControls/FileBrowser` | `ui/FolderPanel` + `core/Session` (`<FileBrowser>`) | |
+| `WinControls/DocumentMap` | `ui/DocumentMap` | shared document, overlay view zone |
+| `WinControls/VerticalFileSwitcher` | `ui/DocListPanel` | |
+| `WinControls/AnsiCharPanel` | `ui/CharPanel` | |
+| `WinControls/ClipboardHistory` | `ui/ClipboardHistoryPanel` | |
+| `WinControls/ProjectPanel` | `ui/ProjectPanel` + `core/Workspace` | |
 | `WinControls/Preference` | `ui/MainWindowDialogs.cpp` (`cmdPreferences`) | the pages for settings the port has |
 | `MISC/PluginsManager` | Phase 5 | new ABI, §7 |
 | `NppDarkMode`, `DarkMode/` | not ported | GTK theme + `gtk-application-prefer-dark-theme` |
@@ -477,9 +521,17 @@ Range, Hide Lines, synchronized scrolling, Monitoring, text direction,
 `shortcuts.xml` integrity check for Run commands (upstream keeps an HMAC in
 `config.xml`), and the MD5/SHA "from files" dialogs.
 
-**Phase 4 — panels.** Decide on docking (§2.2), then Function List (upstream
-parser + `functionList/*.xml`), Folder as Workspace, Document List, Document
-Map, Character panel, Clipboard History, Project panels.
+**Phase 4 — panels (done).** A custom GtkPaned/GtkNotebook dock (§2.2),
+then Function List (upstream parser on `core::Sci`, `functionList/*.xml`,
+checked against upstream's fixtures), Folder as Workspace, Document List,
+Document Map, Character Panel, Clipboard History and Project Panels, with
+the search results moved into the dock. See §3. Left for later: the
+Function List's preferences (initial sort setting is kept, no dialog) and
+"go to the function at the caret", Document List grouping by view and its
+optional path column, Folder as Workspace's search-as-you-type, project
+items reordered by dragging, a Find dialog tab for Find in Projects (a
+prompt is used instead), panel-specific shortcuts beyond upstream's Switch
+to ... commands, and floating windows remembered across monitors.
 
 **Phase 5 — plugins** (§7).
 
@@ -526,6 +578,11 @@ one-line upstream PR:
    (`snprintf`).
 4. `PowerEditor/src/EncodingMapper.cpp` uses `_stricmp` (use a portable
    case-insensitive compare).
+5. `PowerEditor/src/uchardet/nsCodingStateMachine.h` stores state numbers
+   beyond the `nsSMState` enumerators in that enum (UBSan: "load of value 9,
+   which is not a valid value for type 'nsSMState'"). Harmless with GCC and
+   MSVC, but undefined behaviour; give the enum an underlying type
+   (`enum nsSMState : int`) or keep states in an integer.
 
 ---
 
@@ -577,6 +634,12 @@ one-line upstream PR:
   kinds, trim, TAB/space, empty and duplicate lines, join, comments,
   bookmarked lines), column insertion, Style Configurator saving, and UDL
   parsing (current and pre-2.0 formats, keyword encoding).
+- `panels`: Function List parsing on the 42 fixtures of upstream's own
+  Function List unit test (`PowerEditor/Test/FunctionList`, checked out
+  with CRLF line endings as upstream's Windows CI sees them, with its
+  test-only `filesForTesting` rules), compared with upstream's expected
+  JSON; `.workspace` files (Windows backslashes, relative names, round
+  trip); `session.xml` `<FileBrowser>`.
 - `dialogs_and_commands`: a live `MainWindow`: commands by upstream ID and
   their check states, read-only protection, Style tokens, tab commands,
   printing to PDF (pages, selection); Find dialog operations, status texts,
@@ -586,8 +649,15 @@ one-line upstream PR:
   recording), playback, until end of file, saving to `shortcuts.xml` and
   shortcuts for saved macros; Run variables and commands; UDL detection and
   highlighting (Markdown), Language menu, sessions; Preferences effects
-  (new document defaults, margins, edge); localization switching and
-  `shortcuts.xml` keys over the defaults.
+  (new document defaults, margins, edge); the panels (Function List tree,
+  sort, filter, opening a function, re-parse after edits; Document Map
+  zone and scrolling, detaching when its document closes; Document List;
+  Character Panel code pages and HTML forms; Clipboard History; Folder as
+  Workspace listing, locate, refresh on disk changes, session round trip;
+  Project Panel editing, saving, reopening, the exit prompt, Find in
+  Projects; docking moves, floating, and the layout restored in a new
+  window); localization switching and `shortcuts.xml` keys over the
+  defaults.
 - `app_launch`: starts the real application (`-multiInst`) with a file and
   `-n3`, then exits after 1.5 s through the normal exit path.
 - `single_instance`: on a private bus from `dbus-run-session`, a second

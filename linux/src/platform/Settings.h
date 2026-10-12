@@ -5,6 +5,8 @@
 #pragma once
 
 #include <filesystem>
+#include <array>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -76,6 +78,11 @@ struct Settings {
     int maxRecentFiles = 10;
     std::vector<std::string> recentFiles; // most recent first
     std::vector<std::string> runHistory;  // Run... dialog, most recent first
+
+    // Docking panels: DockManager::saveState() ("id" -> "area,shown,...").
+    std::map<std::string, std::string> docking;
+    std::array<std::string, 3> projectWorkspaces; // Project Panel 1-3 workspace files
+    bool functionListSorted = false;
 
     int width = 1100;
     int height = 750;

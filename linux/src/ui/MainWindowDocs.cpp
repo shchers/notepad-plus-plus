@@ -56,8 +56,11 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
 
     core::Buffer* b = t->buf.get();
     v.onUpdateUI = [this, t] {
-        if (!closing_ && t == activeTab())
+        if (!closing_ && t == activeTab()) {
             refreshStatus();
+            if (docMap_ && dock_->isShown("documentMap"))
+                docMap_->sync();
+        }
     };
     // Every view of a shared document gets the save point notification.
     v.onSavePoint = [this, t](bool) {
@@ -67,7 +70,12 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
         if (t == activeTab())
             refreshTitle();
     };
-    v.onTextModified = [b] { b->snapshotStale = true; };
+    v.onTextModified = [this, b] {
+        b->snapshotStale = true;
+        // Upstream re-parses the Function List after edits.
+        if (funcList_ && !closing_ && activeBuffer() == b && dock_->isShown("functionList"))
+            funcList_->scheduleReload();
+    };
     v.onFocusIn = [this, t] {
         if (!closing_ && activeView_ != t->viewIdx) {
             activeView_ = t->viewIdx;
@@ -148,6 +156,11 @@ void MainWindow::removeTab(Tab& t)
     auto it = std::find_if(tabs_.begin(), tabs_.end(), [&](const auto& p) { return p.get() == &t; });
     std::unique_ptr<Tab> owned = std::move(*it); // keep alive while GTK detaches it
     tabs_.erase(it);
+    if (panelSource_ == owned->view.get()) { // the Document Map must let go of it
+        if (docMap_)
+            docMap_->attach(nullptr);
+        panelSource_ = nullptr;
+    }
     if (page >= 0)
         gtk_notebook_remove_page(nb, page);
     owned.reset();
@@ -809,6 +822,11 @@ core::Session MainWindow::currentSession() const
         s.activeView = 1 - s.activeView;
     if (s.views[s.activeView].empty())
         s.activeView = kMainView;
+    // Folder as Workspace goes into the session while it is open, as upstream.
+    if (folder_ && dock_ && dock_->isShown("folderAsWorkspace")) {
+        s.includeFileBrowser = true;
+        folder_->saveTo(s);
+    }
     return s;
 }
 
@@ -914,6 +932,11 @@ bool MainWindow::loadSession(const fs::path& file, std::string* error)
     core::Session s;
     if (!core::readSession(file, s, error))
         return false;
+    // Folder as Workspace comes back with the session that had it open.
+    if (s.includeFileBrowser && folder_) {
+        folder_->restoreFrom(s);
+        dock_->show("folderAsWorkspace", false);
+    }
 
     // A lone pristine "new 1" makes way for the session, as upstream.
     if (!s.empty() && tabs_.size() == 1 && tabs_[0]->buf->isUntitled() && !isModified(*tabs_[0]->buf) &&
@@ -988,6 +1011,10 @@ void MainWindow::restartSnapshotTimer()
 
 bool MainWindow::requestQuit()
 {
+    // A changed workspace in a Project Panel is offered for saving first.
+    for (auto& p : projects_)
+        if (p && !p->confirmClose())
+            return false;
     if (snapshotsOn()) {
         // Upstream snapshot mode: unsaved documents are kept, nothing is asked.
         for (core::Buffer* b : buffers())

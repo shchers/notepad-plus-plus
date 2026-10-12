@@ -162,8 +162,10 @@ std::vector<Top> mainMenu()
     return {
         {"file", "&File", {
             C(IDM_FILE_NEW, "&New"), C(IDM_FILE_OPEN, "&Open..."),
-            S("file-openFolder", "Open Containing &Folder", {P(IDM_FILE_OPEN_FOLDER, "File Manager"), P(IDM_FILE_OPEN_CMD, "Terminal")}),
+            S("file-openFolder", "Open Containing &Folder", {P(IDM_FILE_OPEN_FOLDER, "File Manager"), P(IDM_FILE_OPEN_CMD, "Terminal"), SEP,
+                                                             C(IDM_FILE_CONTAININGFOLDERASWORKSPACE, "Folder as Workspace")}),
             C(IDM_FILE_OPEN_DEFAULT_VIEWER, "Open in &Default Viewer"),
+            C(IDM_FILE_OPENFOLDERASWORKSPACE, "Open Folder as &Workspace..."),
             C(IDM_FILE_RELOAD, "Re&load from Disk"), C(IDM_FILE_SAVE, "&Save"), C(IDM_FILE_SAVEAS, "Save &As..."),
             C(IDM_FILE_SAVECOPYAS, "Save a Cop&y As..."), C(IDM_FILE_SAVEALL, "Sa&ve All"), C(IDM_FILE_RENAME, "&Rename..."),
             C(IDM_FILE_CLOSE, "&Close"), C(IDM_FILE_CLOSEALL, "Clos&e All"),
@@ -245,7 +247,8 @@ std::vector<Top> mainMenu()
                 C(IDM_EDIT_MULTISELECTNEXTMATCHCASEWHOLEWORD, "Match Case && Whole Word")}),
             C(IDM_EDIT_MULTISELECTUNDO, "Undo the Latest Added Multi-Select"),
             C(IDM_EDIT_MULTISELECTSSKIP, "Skip Current && Go to Next Multi-select"), SEP,
-            C(IDM_EDIT_COLUMNMODE, "Colum&n Editor..."), SEP,
+            C(IDM_EDIT_COLUMNMODE, "Colum&n Editor..."), C(IDM_EDIT_CHAR_PANEL, "Character &Panel"),
+            C(IDM_EDIT_CLIPBOARDHISTORY_PANEL, "Clipboard &History"), SEP,
             S("edit-readonlyInNotepad++", "Read-&Only in Notepad++", {
                 C(IDM_EDIT_TOGGLEREADONLY, "Read-Only on Current Document"),
                 C(IDM_EDIT_SETREADONLYFORALLDOCS, "Read-Only for All Documents"),
@@ -323,6 +326,10 @@ std::vector<Top> mainMenu()
                 C(IDM_VIEW_UNFOLD_1, "1"), C(IDM_VIEW_UNFOLD_2, "2"), C(IDM_VIEW_UNFOLD_3, "3"), C(IDM_VIEW_UNFOLD_4, "4"),
                 C(IDM_VIEW_UNFOLD_5, "5"), C(IDM_VIEW_UNFOLD_6, "6"), C(IDM_VIEW_UNFOLD_7, "7"), C(IDM_VIEW_UNFOLD_8, "8")}),
             SEP, C(IDM_VIEW_SUMMARY, "&Summary..."), SEP,
+            S("view-project", "Pro&ject Panels", {C(IDM_VIEW_PROJECT_PANEL_1, "Project Panel &1"), C(IDM_VIEW_PROJECT_PANEL_2, "Project Panel &2"),
+                                                 C(IDM_VIEW_PROJECT_PANEL_3, "Project Panel &3")}),
+            C(IDM_VIEW_FILEBROWSER, "Folder as Wor&kspace"), C(IDM_VIEW_DOC_MAP, "&Document Map"),
+            C(IDM_VIEW_DOCLIST, "D&ocument List"), C(IDM_VIEW_FUNC_LIST, "Function &List"), SEP,
             C(IDM_VIEW_SYNSCROLLV, "Sy&nchronize Vertical Scrolling"), C(IDM_VIEW_SYNSCROLLH, "Syn&chronize Horizontal Scrolling"),
             SEP, C(IDM_EDIT_RTL, "T&ext Direction RTL"), C(IDM_EDIT_LTR, "Te&xt Direction LTR"), SEP,
             C(IDM_VIEW_MONITORING, "Monito&ring (tail -f)")}},

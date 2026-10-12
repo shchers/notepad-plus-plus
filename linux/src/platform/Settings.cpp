@@ -16,6 +16,8 @@ constexpr const char* kGroupBackup = "Backup";
 constexpr const char* kGroupHistory = "History";
 constexpr const char* kGroupWindow = "Window";
 constexpr const char* kGroupFind = "Find";
+constexpr const char* kGroupDocking = "Docking";
+constexpr const char* kGroupPanels = "Panels";
 using KeyFilePtr = std::unique_ptr<GKeyFile, decltype(&g_key_file_unref)>;
 } // namespace
 
@@ -129,6 +131,15 @@ bool Settings::load(const std::filesystem::path& file)
     getBool(kGroupFind, "bookmarkLine", find.bookmarkLine);
     getBool(kGroupFind, "purge", find.purge);
 
+    if (gchar** keys = g_key_file_get_keys(kf.get(), kGroupDocking, nullptr, nullptr)) {
+        for (gchar** k = keys; *k; ++k)
+            getString(kGroupDocking, *k, docking[*k]);
+        g_strfreev(keys);
+    }
+    for (std::size_t i = 0; i < projectWorkspaces.size(); ++i)
+        getString(kGroupPanels, ("projectWorkspace" + std::to_string(i + 1)).c_str(), projectWorkspaces[i]);
+    getBool(kGroupPanels, "functionListSorted", functionListSorted);
+
     getInt(kGroupWindow, "width", width, 200, 16384);
     getInt(kGroupWindow, "height", height, 150, 16384);
     getBool(kGroupWindow, "maximized", maximized);
@@ -206,6 +217,12 @@ bool Settings::save(const std::filesystem::path& file) const
     g_key_file_set_boolean(kf.get(), kGroupFind, "hidden", find.hidden);
     g_key_file_set_boolean(kf.get(), kGroupFind, "bookmarkLine", find.bookmarkLine);
     g_key_file_set_boolean(kf.get(), kGroupFind, "purge", find.purge);
+
+    for (const auto& [k, v] : docking)
+        g_key_file_set_string(kf.get(), kGroupDocking, k.c_str(), v.c_str());
+    for (std::size_t i = 0; i < projectWorkspaces.size(); ++i)
+        g_key_file_set_string(kf.get(), kGroupPanels, ("projectWorkspace" + std::to_string(i + 1)).c_str(), projectWorkspaces[i].c_str());
+    g_key_file_set_boolean(kf.get(), kGroupPanels, "functionListSorted", functionListSorted);
 
     g_key_file_set_integer(kf.get(), kGroupWindow, "width", width);
     g_key_file_set_integer(kf.get(), kGroupWindow, "height", height);

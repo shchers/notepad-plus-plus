@@ -97,16 +97,8 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
     if (settings_.splitPosition > 0)
         gtk_paned_set_position(GTK_PANED(paned_), settings_.splitPosition);
     gtk_widget_set_vexpand(paned_, TRUE);
-    // Search results under the editors, as upstream's docked Finder.
-    resultsPaned_ = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-    g_object_ref(resultsPaned_);
-    results_ = std::make_unique<SearchResults>(tr_);
-    results_->applyStyles(styles_);
-    results_->onOpen = [this](const ResultLocation& loc) { openResult(loc); };
-    results_->onClose = [this] { showSearchResults(false); };
-    gtk_paned_pack1(GTK_PANED(resultsPaned_), paned_, TRUE, FALSE);
-    gtk_paned_pack2(GTK_PANED(resultsPaned_), results_->widget(), FALSE, TRUE);
-    gtk_box_pack_start(GTK_BOX(vbox), resultsPaned_, TRUE, TRUE, 0);
+    // The editors in the middle of the dock, with the panels around them.
+    gtk_box_pack_start(GTK_BOX(vbox), buildPanels(paned_), TRUE, TRUE, 0);
 
     findBar_ = std::make_unique<FindBar>([this] { return activeView(); }, tr_);
     gtk_box_pack_start(GTK_BOX(vbox), findBar_->widget(), FALSE, FALSE, 0);
@@ -152,7 +144,7 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
 
     gtk_widget_show_all(vbox);
     gtk_widget_hide(notebooks_[kSubView]);
-    gtk_widget_hide(results_->widget());
+    restorePanels();
     gtk_widget_set_visible(toolbar_, !settings_.hideToolbar);
     gtk_widget_set_visible(statusBar_, !settings_.hideStatusBar);
     refreshRecentMenu();
@@ -163,6 +155,8 @@ MainWindow::~MainWindow()
 {
     closing_ = true;
     findDlg_.reset();
+    if (dock_ && !gtk_widget_in_destruction(window_))
+        savePanels();
     for (guint* src : {&refreshIdle_, &changeCheckIdle_, &snapshotTimer_})
         if (*src)
             g_source_remove(*src);
@@ -177,8 +171,17 @@ MainWindow::~MainWindow()
             if (nb)
                 g_signal_handlers_disconnect_by_data(nb, this);
     }
-    tabs_.clear(); // releases Scintilla widgets before the window goes
+    docMap_.reset(); // before the documents it shows
+    tabs_.clear();   // releases Scintilla widgets before the window goes
     results_.reset();
+    funcList_.reset();
+    folder_.reset();
+    docList_.reset();
+    charPanel_.reset();
+    clipHistory_.reset();
+    for (auto& p : projects_)
+        p.reset();
+    dock_.reset();
     if (tabMenu_) {
         gtk_widget_destroy(tabMenu_);
         g_object_unref(tabMenu_);
@@ -187,7 +190,7 @@ MainWindow::~MainWindow()
         g_object_unref(printSettings_);
     if (window_)
         gtk_widget_destroy(window_);
-    for (GtkWidget* w : {notebooks_[kMainView], notebooks_[kSubView], paned_, resultsPaned_})
+    for (GtkWidget* w : {notebooks_[kMainView], notebooks_[kSubView], paned_})
         if (w)
             g_object_unref(w);
     if (window_)
@@ -415,15 +418,10 @@ bool MainWindow::saveShortcuts(std::string* error)
 
 void MainWindow::showSearchResults(bool show)
 {
-    GtkWidget* w = results_->widget();
-    if (show && !gtk_widget_get_visible(w)) {
-        gtk_widget_show(w);
-        // Upstream docks the Finder at about a quarter of the height.
-        const int h = gtk_widget_get_allocated_height(resultsPaned_);
-        if (h > 0)
-            gtk_paned_set_position(GTK_PANED(resultsPaned_), h * 7 / 10);
-    } else if (!show) {
-        gtk_widget_hide(w);
+    if (show) {
+        dock_->show(kSearchResultsPanel, false);
+    } else {
+        dock_->hide(kSearchResultsPanel);
         if (EditorView* v = activeView())
             gtk_widget_grab_focus(v->widget());
     }
@@ -615,6 +613,7 @@ void MainWindow::refreshAll()
     syncActionStates();
     refreshTitle();
     refreshStatus();
+    refreshPanels();
 }
 
 void MainWindow::refreshRecentMenu()
@@ -765,6 +764,7 @@ gboolean MainWindow::onDeleteEvent(GtkWidget*, GdkEvent*, gpointer self)
     if (gtk_widget_get_visible(w->notebooks_[kSubView]) && gtk_widget_get_visible(w->notebooks_[kMainView]))
         w->settings_.splitPosition = gtk_paned_get_position(GTK_PANED(w->paned_));
     w->settings_.recentFiles = w->recent_.items();
+    w->savePanels();
     w->settings_.save();
     return FALSE;
 }

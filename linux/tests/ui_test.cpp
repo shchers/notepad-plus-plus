@@ -4,6 +4,7 @@
 // shortcuts.xml.
 
 #include "core/LanguageCatalog.h"
+#include "core/Workspace.h"
 #include "platform/FileIO.h"
 #include "platform/Paths.h"
 #include "ui/MainWindow.h"
@@ -59,6 +60,20 @@ void pump()
 {
     while (g_main_context_iteration(nullptr, FALSE)) {
     }
+}
+
+
+template <class F>
+bool waitFor(F cond, int ms = 5000)
+{
+    const gint64 end = g_get_monotonic_time() + ms * 1000;
+    while (!cond()) {
+        if (g_get_monotonic_time() > end)
+            return false;
+        pump();
+        g_usleep(20000);
+    }
+    return true;
 }
 
 struct Prompter {
@@ -518,6 +533,153 @@ void testUserDefinedLanguages(GtkApplication* app, core::LanguageCatalog& langs)
     CHECK(found);
 }
 
+void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    ui::DockManager& dock = w->dock();
+
+    // Function List follows the active document.
+    const fs::path cpp = g_dir / "panels" / "shapes.cpp";
+    writeText(cpp, "class Shape {\npublic:\n    int area() { return 0; }\n    void draw() {}\n};\n\nint main()\n{\n    return 0;\n}\n");
+    CHECK(w->openFiles({cpp}) == 1);
+    CHECK(!w->commandChecked(IDM_VIEW_FUNC_LIST));
+    CHECK(w->runCommand(IDM_VIEW_FUNC_LIST));
+    CHECK(dock.isShown("functionList") && w->commandChecked(IDM_VIEW_FUNC_LIST));
+    CHECK(dock.areaOf("functionList") == ui::DockManager::Area::Right);
+    CHECK(w->functionList().dump() == "shapes.cpp\n  Shape\n    area\n    draw\n  main\n");
+    w->functionList().setSorted(true);
+    CHECK(w->functionList().dump() == "shapes.cpp\n  Shape\n    area\n    draw\n  main\n");
+    w->functionList().setFilter("dr");
+    CHECK(w->functionList().dump() == "shapes.cpp\n  Shape\n    draw\n");
+    w->functionList().setFilter("");
+    ui::EditorView& v = *w->activeView();
+    GtkTreePath* mainRow = gtk_tree_path_new_from_string("0:1");
+    CHECK(w->functionList().openRow(mainRow));
+    gtk_tree_path_free(mainRow);
+    CHECK(v.lineFromPos(v.currentPos()) == 6);
+    // Edits re-parse after a pause.
+    v.execute(SCI_DOCUMENTEND);
+    v.execute(SCI_ADDTEXT, 16, reinterpret_cast<sptr_t>("void extra() {}\n"));
+    CHECK(waitFor([&] { return w->functionList().dump().find("extra") != std::string::npos; }));
+
+    // Document Map: shares the document, marks the visible part, scrolls the editor.
+    std::string big;
+    for (int i = 0; i < 400; ++i)
+        big += "line " + std::to_string(i) + "\n";
+    v.setText(big);
+    CHECK(w->runCommand(IDM_VIEW_DOC_MAP));
+    pump();
+    ui::DocumentMap& map = w->documentMap();
+    CHECK(map.view().execute(SCI_GETDOCPOINTER) == v.execute(SCI_GETDOCPOINTER));
+    CHECK(waitFor([&] { map.sync(); return map.zone().second > 0; }));
+    const sptr_t before = v.execute(SCI_GETFIRSTVISIBLELINE);
+    map.scrollTo(map.zone().first + map.zone().second + 200);
+    CHECK(v.execute(SCI_GETFIRSTVISIBLELINE) > before);
+
+    // Document List: tabs in order, the active one marked.
+    w->newDocument();
+    CHECK(w->runCommand(IDM_VIEW_DOCLIST));
+    CHECK(w->documentList().dump() == " shapes.cpp\n>new 1\n");
+    w->activeView()->execute(SCI_ADDTEXT, 1, reinterpret_cast<sptr_t>("x"));
+    pump();
+    w->runCommand(IDM_VIEW_TAB1);
+    CHECK(w->documentList().dump() == ">shapes.cpp\n *new 1\n"); // setText() left shapes.cpp unmodified
+    // Closing the document the map shows detaches it.
+    CHECK(w->runCommand(IDM_FILE_CLOSE));
+    CHECK(w->documentList().dump() == ">*new 1\n");
+    CHECK(map.view().execute(SCI_GETDOCPOINTER) == w->activeView()->execute(SCI_GETDOCPOINTER));
+
+    // Character Panel: the document's code page, HTML forms; double-click inserts.
+    CHECK(w->runCommand(IDM_EDIT_CHAR_PANEL));
+    ui::CharPanel& cp = w->charPanel();
+    CHECK(cp.charset() == "WINDOWS-1252");
+    CHECK(cp.textFor(233, 2) == "\xC3\xA9" && cp.textFor(233, 3) == "&eacute;" && cp.textFor(233, 4) == "&#233;" && cp.textFor(233, 5) == "&#xE9;");
+    CHECK(cp.textFor(128, 2) == "\xE2\x82\xAC" && cp.textFor(128, 4) == "&#8364;" && cp.textFor(65, 3) == "A"); // no name: the character
+    cp.setCharset("WINDOWS-1251");
+    CHECK(cp.textFor(233, 2) == "\xD0\xB9"); // й
+
+    // Clipboard History: what is copied, newest first, no duplicates.
+    CHECK(w->runCommand(IDM_EDIT_CLIPBOARDHISTORY_PANEL));
+    GtkClipboard* cb = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    for (const char* t : {"first", "second", "first"}) {
+        gtk_clipboard_set_text(cb, t, -1);
+        CHECK(waitFor([&] { return !w->clipboardHistory().entries().empty() && w->clipboardHistory().entries().front() == t; }));
+    }
+    const auto& hist = w->clipboardHistory().entries();
+    CHECK(hist.size() >= 2 && hist[0] == "first" && hist[1] == "second" && std::count(hist.begin(), hist.end(), "first") == 1);
+
+    // Folder as Workspace: lazy tree, locate, refresh on changes, session.
+    const fs::path ws = g_dir / "faw";
+    writeText(ws / "b.txt", "b");
+    writeText(ws / "A.txt", "a");
+    writeText(ws / "src" / "main.c", "int main;");
+    writeText(ws / ".hidden" / "x", "");
+    ui::FolderPanel& fp = w->folderPanel();
+    fp.addRoot(ws);
+    CHECK(w->runCommand(IDM_VIEW_FILEBROWSER));
+    CHECK(fp.dump() == "faw/\n  src/\n  A.txt\n  b.txt\n");
+    CHECK(fp.locate(ws / "src" / "main.c"));
+    CHECK(fp.dump() == "faw/\n  src/\n    main.c\n  A.txt\n  b.txt\n" && fp.selectedPath() == ws / "src" / "main.c");
+    writeText(ws / "src" / "util.c", "");
+    CHECK(waitFor([&] { return fp.dump().find("util.c") != std::string::npos; }));
+    core::Session s = w->currentSession();
+    CHECK(s.includeFileBrowser && s.fileBrowserRoots.size() == 1 && s.fileBrowserRoots[0].folder == ws.string());
+    CHECK(s.fileBrowserRoots[0].expanded == std::vector<std::string>{(ws / "src").string()});
+    fp.clear();
+    CHECK(fp.dump().empty());
+    fp.restoreFrom(s);
+    CHECK(fp.dump().find("    main.c\n") != std::string::npos);
+
+    // Project Panel: build, save in upstream format, reopen.
+    ui::ProjectPanel& pr = w->projectPanel(1);
+    CHECK(w->runCommand(IDM_VIEW_PROJECT_PANEL_1));
+    const std::string proj = pr.addProject("App");
+    const std::string folder = pr.addFolder(proj, "Sources");
+    pr.addFiles(folder, {ws / "src" / "main.c"});
+    pr.addDirectory(proj, ws);
+    CHECK(pr.isDirty());
+    CHECK(pr.dump() == "*Workspace\n  App\n    Sources\n      main.c\n    src\n      main.c\n      util.c\n    A.txt\n    b.txt\n");
+    pr.move(folder, false);
+    CHECK(pr.dump().find("  App\n    src\n") != std::string::npos);
+    const fs::path wsFile = g_dir / "panels" / "my.workspace";
+    CHECK(pr.saveWorkspace(wsFile) && !pr.isDirty());
+    CHECK(readText(wsFile).find("<File name=\"../faw/src/main.c\"") == std::string::npos); // absolute when outside, as upstream
+    pr.newWorkspace();
+    CHECK(pr.openWorkspace(wsFile) && pr.dump().rfind("my.workspace\n  App\n", 0) == 0);
+    CHECK(core::workspaceFiles(pr.workspace()).size() == 5);
+    pr.rename("0:0", "Renamed");
+    p.answers = {Answer::Cancel};
+    CHECK(!w->requestQuit()); // a changed workspace: Cancel keeps the window
+    pr.saveWorkspace();
+
+    // Find in Projects: the workspace's files.
+    core::FindOptions o;
+    o.what = "main";
+    CHECK(w->findDialog().doFindInFileList(o, core::workspaceFiles(pr.workspace())) == 2);
+
+    // The dock: move, hide; the layout is saved and comes back.
+    dock.moveTo("functionList", ui::DockManager::Area::Left);
+    CHECK(dock.areaOf("functionList") == ui::DockManager::Area::Left && dock.isShown("functionList"));
+    dock.moveTo("charPanel", ui::DockManager::Area::Float);
+    pump();
+    CHECK(dock.areaOf("charPanel") == ui::DockManager::Area::Float && dock.isShown("charPanel"));
+    CHECK(w->runCommand(IDM_VIEW_DOC_MAP)); // toggles off
+    CHECK(!dock.isShown("documentMap") && !w->commandChecked(IDM_VIEW_DOC_MAP));
+    w.reset();
+
+    auto w2 = makeWindow(app, langs, p);
+    CHECK(w2->dock().areaOf("functionList") == ui::DockManager::Area::Left && w2->dock().isShown("functionList"));
+    CHECK(w2->dock().areaOf("charPanel") == ui::DockManager::Area::Float && w2->dock().isShown("charPanel"));
+    CHECK(!w2->dock().isShown("documentMap") && w2->dock().isShown("documentList"));
+    CHECK(w2->commandChecked(IDM_VIEW_FUNC_LIST) && w2->commandChecked(IDM_VIEW_PROJECT_PANEL_1));
+    CHECK(w2->projectPanel(1).workspaceFile() == wsFile && w2->projectPanel(1).dump().find("Renamed") != std::string::npos);
+    for (const char* id : {"functionList", "charPanel", "documentList", "clipboardHistory", "folderAsWorkspace", "project1"})
+        w2->dock().hide(id);
+    w2->dock().moveTo("functionList", ui::DockManager::Area::Right);
+    w2->dock().moveTo("charPanel", ui::DockManager::Area::Right);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -548,6 +710,8 @@ int main(int argc, char** argv)
     testUserDefinedLanguages(app, langs);
     std::printf("preferences...\n");
     testPreferences(app, langs);
+    std::printf("panels...\n");
+    testPanels(app, langs);
     std::printf("localization and shortcuts...\n");
     testLocalizationAndShortcuts(app, langs);
 

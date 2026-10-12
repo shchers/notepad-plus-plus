@@ -9,6 +9,9 @@
 //   commands       <Menu><Main><Commands><Item id="41001" .../>  (IDM_* IDs)
 //   dialogs        <Dialog><Find><Item id="1620" .../>  path "Find", or
 //                  nested sections such as "Preference/Global"
+//   panels         <FolderAsWorkspace><Menu><Item id="3511" .../> path
+//                  "FolderAsWorkspace/Menu"; <DocList><ColumnName name=.../>
+//                  through dialogAttr("DocList/ColumnName", "name")
 //   misc strings   <MiscStrings><find-status-count-nb-matches value=.../>
 //   message boxes  <MessageBox><DocTooDirtyToMonitor title=... message=.../>
 //

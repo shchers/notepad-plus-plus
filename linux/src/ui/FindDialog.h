@@ -26,6 +26,8 @@
 
 namespace npp::ui {
 
+class FindProgress; // the progress window of Find in Files
+
 // What the dialog needs from the main window.
 struct FindHost {
     std::function<EditorView*()> activeView;
@@ -79,6 +81,8 @@ public:
     int doFindAllInOpened(const core::FindOptions& o);        // IDC_FINDALL_OPENEDFILES
     int doFindInFiles(const core::FindOptions& o);            // IDD_FINDINFILES_FIND_BUTTON
     int doReplaceInFiles(const core::FindOptions& o, bool confirm = true); // IDD_FINDINFILES_REPLACEINFILES
+    // Find in Projects: the given files instead of a folder (IDD_FINDINFILES_FINDINPROJECTS).
+    int doFindInFileList(const core::FindOptions& o, const std::vector<std::filesystem::path>& files);
 
     // Presses a button by its upstream ID (IDOK = 1 is Find Next): takes the
     // fields, remembers them, records the operation into a macro and runs it.
@@ -89,6 +93,7 @@ public:
 
 private:
     struct Row; // a labelled field row
+    int searchFiles(const core::FindOptions& o, const std::vector<std::filesystem::path>& files, FindProgress& progress);
     void build();
     void updateTab();
     void setStatus(const std::string& msg, bool error = false);

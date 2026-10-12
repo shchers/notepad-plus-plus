@@ -799,13 +799,11 @@ int FindDialog::doFindAllInOpened(const core::FindOptions& in)
     return total;
 }
 
-namespace {
-
 // A small progress window with Cancel, pumped while Find in Files runs
 // (upstream "Find In Files progress...").
-class Progress {
+class FindProgress {
 public:
-    Progress(GtkWindow* parent, const std::string& title)
+    FindProgress(GtkWindow* parent, const std::string& title)
     {
         win_ = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         gtk_window_set_title(GTK_WINDOW(win_), title.c_str());
@@ -828,7 +826,7 @@ public:
         gtk_box_pack_start(GTK_BOX(box), cancel, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(win_), box);
     }
-    ~Progress() { gtk_widget_destroy(win_); }
+    ~FindProgress() { gtk_widget_destroy(win_); }
     // Returns false when cancelled. Shows the window once the work takes a while.
     bool update(const std::string& text, double fraction)
     {
@@ -859,11 +857,9 @@ private:
     gint64 last_ = 0;
 };
 
-} // namespace
 
 int FindDialog::doFindInFiles(const core::FindOptions& o)
 {
-    SearchResults* res = host_.showResults ? host_.showResults() : nullptr;
     std::error_code ec;
     if (o.what.empty() || o.directory.empty() || !fs::is_directory(o.directory, ec)) {
         setStatus(misc("find-status-search-failed", "Find: Search failed"), true);
@@ -871,17 +867,40 @@ int FindDialog::doFindInFiles(const core::FindOptions& o)
     }
     if (core::SearchEngine::pattern(o).empty())
         return 0;
-    Progress progress(GTK_WINDOW(window_), misc("find-in-files-progress-title", "Find In Files progress..."));
+    FindProgress progress(GTK_WINDOW(window_), misc("find-in-files-progress-title", "Find In Files progress..."));
     const core::FileFilter filter(o.filters.empty() ? "*.*" : o.filters);
-    const auto files = core::listFiles(o.directory, filter, o.recursive, o.hidden,
+    const auto found = core::listFiles(o.directory, filter, o.recursive, o.hidden,
                                        [&](std::size_t n) { return progress.update(std::to_string(n) + " files", -1); });
+    std::vector<fs::path> files;
+    for (const auto& c : found)
+        files.push_back(c.path);
+    return searchFiles(o, files, progress);
+}
+
+int FindDialog::doFindInFileList(const core::FindOptions& o, const std::vector<fs::path>& files)
+{
+    if (o.what.empty() || core::SearchEngine::pattern(o).empty())
+        return 0;
+    FindProgress progress(GTK_WINDOW(window_), misc("find-in-files-progress-title", "Find In Files progress..."));
+    // Find in Projects applies the filters to the projects' files, as upstream.
+    const core::FileFilter filter(o.filters.empty() ? "*.*" : o.filters);
+    std::vector<fs::path> picked;
+    for (const fs::path& f : files)
+        if (filter.matchesFile(f.filename().string()))
+            picked.push_back(f);
+    return searchFiles(o, picked, progress);
+}
+
+int FindDialog::searchFiles(const core::FindOptions& o, const std::vector<fs::path>& files, FindProgress& progress)
+{
+    SearchResults* res = host_.showResults ? host_.showResults() : nullptr;
     EditorView scratch;
     core::FileSearcher searcher(scratch.sci());
     if (res)
         res->begin(o.what);
     int total = 0, searched = 0;
     for (std::size_t i = 0; i < files.size(); ++i) {
-        const fs::path& f = files[i].path;
+        const fs::path& f = files[i];
         if (!progress.update(f.string(), static_cast<double>(i) / static_cast<double>(files.size())))
             break;
         core::FileHits fh;
@@ -921,7 +940,7 @@ int FindDialog::doReplaceInFiles(const core::FindOptions& o, bool confirm)
                               "\n\n" + misc("replace-in-files-confirm-filetype", "For file type:") + "\n" +
                               (o.filters.empty() ? "*.*" : o.filters)))
         return 0;
-    Progress progress(GTK_WINDOW(window_), misc("replace-in-files-progress-title", "Replace In Files progress..."));
+    FindProgress progress(GTK_WINDOW(window_), misc("replace-in-files-progress-title", "Replace In Files progress..."));
     const core::FileFilter filter(o.filters.empty() ? "*.*" : o.filters);
     const auto files = core::listFiles(o.directory, filter, o.recursive, o.hidden,
                                        [&](std::size_t n) { return progress.update(std::to_string(n) + " files", -1); });

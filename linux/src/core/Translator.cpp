@@ -73,6 +73,13 @@ bool Translator::merge(const fs::path& file, std::string* error)
     for (const pugi::xml_node d : root.child("Dialog").children())
         if (d.type() == pugi::node_element)
             Walker{*this}.walk(d, d.name());
+    // Panels and other sections at the top level (<FolderAsWorkspace>,
+    // <ProjectManager>, <DocList> ...), looked up the same way.
+    for (const pugi::xml_node d : root.children()) {
+        const std::string_view n = d.name();
+        if (d.type() == pugi::node_element && n != "Menu" && n != "Dialog" && n != "MiscStrings" && n != "MessageBox")
+            Walker{*this}.walk(d, d.name());
+    }
 
     for (const pugi::xml_node m : root.child("MiscStrings").children())
         if (m.type() == pugi::node_element)

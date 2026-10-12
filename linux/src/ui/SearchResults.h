@@ -10,7 +10,8 @@
 //   	Line 1: foo
 //
 // The newest search goes on top and older ones are folded. Double-click (or
-// F4 / Shift+F4 through next()) opens a result.
+// F4 / Shift+F4 through next()) opens a result. It is a docking panel
+// (bottom by default), whose caption gives the title and the close button.
 #pragma once
 
 #include "core/SearchEngine.h"
@@ -58,7 +59,6 @@ public:
     int lastHits() const { return lastHits_; }
 
     std::function<void(const ResultLocation&)> onOpen;
-    std::function<void()> onClose;
 
 private:
     struct Pending {
