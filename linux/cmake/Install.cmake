@@ -7,6 +7,8 @@
 #   share/icons/hicolor/<size>/apps/<app-id>.png
 #   share/man/man1/notepad-plus-plus-gtk.1.gz
 #   share/doc/notepad-plus-plus-gtk/copyright
+#   include/notepad-plus-plus-gtk/                 plugin SDK headers   } component
+#   <libdir>/pkgconfig/notepad-plus-plus-gtk-plugin.pc                  } "sdk"
 
 set(_pkg "${CMAKE_CURRENT_SOURCE_DIR}/packaging")
 
@@ -66,3 +68,28 @@ add_custom_command(OUTPUT "${_chlog_gz}"
   COMMENT "Compressing Debian changelog" VERBATIM)
 add_custom_target(nppgtk_changelog ALL DEPENDS "${_chlog_gz}")
 install(FILES "${_chlog_gz}" DESTINATION ${CMAKE_INSTALL_DOCDIR})
+
+# Plugin SDK: the port's shims and upstream's plugin headers side by side in
+# one directory, as a plugin includes them (<windows.h>, "PluginInterface.h").
+# System-wide plugins go to <libdir>/notepad-plus-plus-gtk/plugins/<Name>/
+# (pkg-config --variable=plugindir); nothing is installed there by default.
+set(_sdk_dir ${CMAKE_INSTALL_INCLUDEDIR}/${NPP_EXE_NAME})
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include/windows.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include/tchar.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include/NppGtk.h"
+  "${NPP_SRC}/MISC/PluginsManager/PluginInterface.h"
+  "${NPP_SRC}/MISC/PluginsManager/Notepad_plus_msgs.h"
+  "${NPP_SRC}/WinControls/DockingWnd/Docking.h"
+  "${NPP_SRC}/WinControls/DockingWnd/dockingResource.h"
+  "${NPP_SRC}/menuCmdID.h"
+  "${SCI_DIR}/include/Scintilla.h"
+  "${SCI_DIR}/include/Sci_Position.h"
+  "${SCI_DIR}/include/ScintillaWidget.h"
+  DESTINATION ${_sdk_dir} COMPONENT sdk)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/sdk/examples/"
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples COMPONENT sdk)
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/sdk/notepad-plus-plus-gtk-plugin.pc.in"
+               "${CMAKE_BINARY_DIR}/notepad-plus-plus-gtk-plugin.pc" @ONLY)
+install(FILES "${CMAKE_BINARY_DIR}/notepad-plus-plus-gtk-plugin.pc"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig COMPONENT sdk)

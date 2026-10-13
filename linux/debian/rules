@@ -11,3 +11,8 @@ override_dh_auto_configure:
 
 # CPack maintainer scripts are not used here: debhelper's triggers
 # (dh_icons, desktop-file-utils) refresh the icon/desktop caches.
+
+# copyright and changelog.Debian.gz come from debian/ through debhelper, for
+# both packages; the copies CMake installs for the CPack route are not needed.
+override_dh_missing:
+	dh_missing --fail-missing -Xusr/share/doc/notepad-plus-plus-gtk/copyright -Xusr/share/doc/notepad-plus-plus-gtk/changelog.Debian.gz

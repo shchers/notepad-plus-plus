@@ -38,7 +38,8 @@ sudo apt install ./dist/notepad-plus-plus-gtk_*.deb
 |---|---|
 | [docs/BUILD.md](docs/BUILD.md) | Native and Docker builds, options, running from a container, troubleshooting |
 | [docs/PACKAGING.md](docs/PACKAGING.md) | `.deb` with CPack or debhelper, PPA, Flatpak, snap, arm64, AppStream, versioning, verification |
-| [docs/PORTING.md](docs/PORTING.md) | Survey of the upstream code, architecture, feature status, module map, roadmap, plugin ABI |
+| [docs/PORTING.md](docs/PORTING.md) | Survey of the upstream code, architecture, feature status, module map, roadmap, plugin design |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | Writing and porting plugins: the SDK, plugin folders, messages and notifications, menus, toolbar, docked panels |
 
 ## What works
 
@@ -58,7 +59,12 @@ files changed outside the editor and a single running instance. Notepad++'s
 own files work as they are: `shortcuts.xml` (keys, macros, Run commands),
 `stylers.xml` and themes, `userDefineLang.xml`, `session.xml`, function list
 rules and `.workspace` files, and a Windows `config.xml` can be imported.
-Auto-completion and plugins are not ported yet. The full table is in
+Plugins use Notepad++'s plugin interface: their source builds against the
+SDK in `sdk/` (upstream's plugin headers on a small `windows.h`) into a
+`.so`, with a GTK user interface — see [docs/PLUGINS.md](docs/PLUGINS.md)
+and the sample in `sdk/examples/HelloGtk`; Plugins ▸ Plugins Admin installs,
+removes and deactivates them. Auto-completion is not ported
+yet. The full table is in
 [docs/PORTING.md §4](docs/PORTING.md#4-what-works-today).
 
 ## Layout
@@ -76,16 +82,19 @@ linux/
 │   ├── platform/           OS services: XDG paths, encodings, file I/O and
 │   │                       monitoring (GIO), settings
 │   ├── ui/                 GTK 3: EditorView (Scintilla), MainWindow, menus and commands,
-│   │                       Find dialog, search results, dialogs, printing, dock and panels
+│   │                       Find dialog, search results, dialogs, printing, dock and panels,
+│   │                       plugin manager and plugin messages
 │   └── main.cpp            CLI compatible with Notepad++ switches
-├── tests/                  headless CTest suite (Xvfb)
+├── sdk/                    plugin SDK: include/ (windows.h, tchar.h, NppGtk.h), pkg-config
+│                           template, examples/HelloGtk
+├── tests/                  headless CTest suite (Xvfb), test plugins
 ├── packaging/              .desktop, AppStream metainfo, icons, man page, copyright,
 │                           CPack maintainer scripts, flatpak/ manifest, snap/ recipe
 ├── debian/                 debhelper packaging (copied to the root by scripts/build-deb.sh)
 ├── docker/                 multi-stage Dockerfile (toolchain, build, artifact, runtime)
 ├── scripts/                install-build-deps, build-native, build-deb, docker-build,
 │                           build-source-package (PPA), build-flatpak, build-snap
-└── docs/                   BUILD, PACKAGING, PORTING
+└── docs/                   BUILD, PACKAGING, PORTING, PLUGINS
 ```
 
 ## Licence

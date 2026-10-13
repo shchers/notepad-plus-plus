@@ -30,8 +30,16 @@ public:
     // Runs a command as if chosen from the menu. Returns false if unknown or disabled.
     bool run(int id);
 
-    // Creates the actions on `map` (once).
+    // Creates the actions on `map` for commands that have none yet.
     void install(GActionMap* map);
+    // Gives a command a check mark after install() (a plugin's
+    // NPPM_SETMENUITEMCHECK on an item that had none).
+    void makeCheckable(int id, State checked, GActionMap* map);
+    bool isCheckable(int id) const
+    {
+        auto it = cmds_.find(id);
+        return it != cmds_.end() && it->second.checked;
+    }
     void syncStates();
     void setEnabled(int id, bool enabled);
     bool isEnabled(int id) const;
@@ -68,6 +76,7 @@ struct DynamicMenus {
     GMenu* userLanguages = nullptr;
     GMenu* macros = nullptr;
     GMenu* runCommands = nullptr;
+    GMenu* plugins = nullptr;
 };
 
 // Builds the main menu following upstream's Notepad_plus.rc layout. Labels

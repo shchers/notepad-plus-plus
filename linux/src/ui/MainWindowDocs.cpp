@@ -8,6 +8,9 @@
 #include "core/FileManager.h"
 #include "platform/Paths.h"
 
+#include <windows.h> // plugin SDK: NPPN_* codes
+#include "Notepad_plus_msgs.h"
+
 #include <algorithm>
 #include <set>
 #include <system_error>
@@ -84,6 +87,9 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
     };
     v.onUriDropped = [this](std::string_view uris) { openUriList(uris); };
     v.onMacroRecord = [this](int msg, uptr_t w, sptr_t l) { recordScintilla(msg, w, l); };
+    v.onScintillaNotify = [this, t](const SCNotification& n) { forwardScintillaNotification(*t, n); };
+    if (modEventFlags_)
+        v.setModEventMask(modEventFlags_);
     if (recording_)
         v.execute(SCI_STARTRECORD);
 
@@ -150,7 +156,9 @@ void MainWindow::attachLabel(Tab& t)
 
 void MainWindow::removeTab(Tab& t)
 {
-    std::shared_ptr<core::Buffer> buf = t.buf;
+    std::shared_ptr<core::Buffer> buf = t.buf; // alive (and its ID valid) until the end
+    if (!closing_)
+        notifyPlugins(NPPN_FILEBEFORECLOSE, buf.get());
     GtkNotebook* nb = GTK_NOTEBOOK(notebooks_[t.viewIdx]);
     const int page = gtk_notebook_page_num(nb, t.view->widget());
     auto it = std::find_if(tabs_.begin(), tabs_.end(), [&](const auto& p) { return p.get() == &t; });
@@ -166,13 +174,17 @@ void MainWindow::removeTab(Tab& t)
     owned.reset();
     if (tabsOf(*buf).empty())
         releaseBuffer(*buf);
-    if (!closing_)
+    if (!closing_) {
         updateViewVisibility();
+        notifyPlugins(NPPN_FILECLOSED, buf.get());
+    }
 }
 
 void MainWindow::releaseBuffer(core::Buffer& b)
 {
     monitors_.erase(&b);
+    if (activatedBuffer_ == &b)
+        activatedBuffer_ = nullptr;
     if (closing_)
         return; // exit: snapshots stay for the next start
     if (!b.isUntitled()) {
@@ -414,8 +426,10 @@ int MainWindow::openFiles(const std::vector<fs::path>& files, const OpenOptions&
                 t = tabsOf(*existing).front();
         } else {
             std::string err;
+            notifyPlugins(NPPN_FILEBEFORELOAD);
             auto lf = core::loadFile(p, -1, &err);
             if (!lf) {
+                notifyPlugins(NPPN_FILELOADFAILED);
                 showError("Cannot open file \"" + p.filename().string() + "\"", err);
                 continue;
             }
@@ -426,8 +440,10 @@ int MainWindow::openFiles(const std::vector<fs::path>& files, const OpenOptions&
                 t = addTab(std::make_shared<core::Buffer>(), activeView_);
             // A path that does not exist yet opens as an empty document that
             // will be created on save.
+            notifyPlugins(NPPN_FILEBEFOREOPEN, t->buf.get());
             applyLoaded(*t, p, std::move(*lf));
             refreshTab(*t);
+            notifyPlugins(NPPN_FILEOPENED, t->buf.get());
             ++opened;
         }
         activateTab(*t);
@@ -486,6 +502,7 @@ void MainWindow::setUserLanguage(core::Buffer& b, const core::UserLanguage& udl)
     if (activeBuffer() == &b) {
         syncActionStates();
         refreshStatus();
+        notifyPlugins(NPPN_LANGCHANGED, &b);
     }
 }
 
@@ -534,6 +551,7 @@ void MainWindow::setLanguage(core::Buffer& b, const core::Language& lang)
     if (activeBuffer() == &b) {
         syncActionStates();
         refreshStatus();
+        notifyPlugins(NPPN_LANGCHANGED, &b);
     }
 }
 
@@ -545,6 +563,8 @@ void MainWindow::setReadOnly(core::Buffer& b, bool ro)
     refreshBufferTabs(b);
     if (activeBuffer() == &b)
         syncActionStates();
+    // Upstream: hwndFrom is the buffer, idFrom its DOCSTATUS_* flags.
+    notifyPlugins(NPPN_READONLYCHANGED, &b, (ro ? DOCSTATUS_READONLY : 0) | (isModified(b) ? DOCSTATUS_BUFFERDIRTY : 0));
 }
 
 void MainWindow::markForcedDirty(core::Buffer& b, bool dirty)
@@ -555,13 +575,17 @@ void MainWindow::markForcedDirty(core::Buffer& b, bool dirty)
     refreshTitle();
 }
 
-bool MainWindow::save(core::Buffer& b, bool saveAs)
+bool MainWindow::save(core::Buffer& b, bool saveAs, const fs::path& to)
 {
     const std::vector<Tab*> tabs = tabsOf(b);
     if (tabs.empty())
         return false;
     fs::path target = b.path;
-    if (b.isUntitled() || saveAs) {
+    if (!to.empty()) {
+        target = normalisedPath(to);
+        if (core::Buffer* other = findByPath(target); other && other != &b)
+            return false;
+    } else if (b.isUntitled() || saveAs) {
         GtkFileChooserNative* dlg = gtk_file_chooser_native_new("Save As", GTK_WINDOW(window_), GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", "_Cancel");
         gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dlg), TRUE);
         if (!b.isUntitled()) {
@@ -589,6 +613,8 @@ bool MainWindow::save(core::Buffer& b, bool saveAs)
         }
     }
 
+    // A plugin may still change the text (trim trailing blanks...).
+    notifyPlugins(NPPN_FILEBEFORESAVE, &b);
     std::string err;
     if (!core::backupBeforeSave(target, settings_.saveBackup, settings_.saveBackupDir, &err)) {
         if (ask("The previous version of the file could not be saved into the backup directory.",
@@ -626,6 +652,7 @@ bool MainWindow::save(core::Buffer& b, bool saveAs)
         detectLanguage(b, target);
     refreshBufferTabs(b);
     refreshAll();
+    notifyPlugins(NPPN_FILESAVED, &b);
     return true;
 }
 
@@ -890,6 +917,7 @@ MainWindow::Tab* MainWindow::openSessionFile(const core::SessionFile& f, int vie
     }
     b.userReadOnly = f.userReadOnly;
     Tab* t = addTab(buf, viewIdx);
+    notifyPlugins(NPPN_FILEBEFOREOPEN, &b);
     applyLoaded(*t, untitled ? fs::path{} : normalisedPath(f.filename), std::move(*lf));
 
     if (hasBackup) {
@@ -924,6 +952,9 @@ MainWindow::Tab* MainWindow::openSessionFile(const core::SessionFile& f, int vie
     t->view->contractFolds(folds);
     t->view->restorePosition({f.firstVisibleLine, f.xOffset, f.startPos, f.endPos, f.selMode, f.scrollWidth});
     refreshTab(*t);
+    notifyPlugins(NPPN_FILEOPENED, &b);
+    if (hasBackup)
+        notifyPlugins(NPPN_SNAPSHOTDIRTYFILELOADED, nullptr, reinterpret_cast<uptr_t>(&b));
     return t;
 }
 
@@ -1010,6 +1041,15 @@ void MainWindow::restartSnapshotTimer()
 }
 
 bool MainWindow::requestQuit()
+{
+    notifyPlugins(NPPN_BEFORESHUTDOWN);
+    const bool ok = quitConfirmed();
+    if (!ok)
+        notifyPlugins(NPPN_CANCELSHUTDOWN);
+    return ok;
+}
+
+bool MainWindow::quitConfirmed()
 {
     // A changed workspace in a Project Panel is offered for saving first.
     for (auto& p : projects_)

@@ -89,6 +89,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # so the build tree mirrors the install layout and runs without installing.
 set(NPP_DATA_SUBDIR "${CMAKE_INSTALL_DATADIR}/${NPP_EXE_NAME}")
 set(NPP_BUILD_DATA_DIR "${CMAKE_BINARY_DIR}/${NPP_DATA_SUBDIR}")
+# System-wide plugins: <prefix>/<libdir>/<name>/plugins/<Plugin>/<Plugin>.so
+set(NPP_PLUGINS_SUBDIR "${CMAKE_INSTALL_LIBDIR}/${NPP_EXE_NAME}/plugins")
+
+# Plugin SDK (linux/sdk): the port's <windows.h> shim first, then upstream's
+# plugin headers, used unmodified.
+set(NPP_SDK_INCLUDE_DIRS
+  "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include"
+  "${NPP_SRC}/MISC/PluginsManager"
+  "${NPP_SRC}/WinControls/DockingWnd"
+  "${NPP_SRC}"
+  "${SCI_DIR}/include")
 
 option(NPP_BUILD_TESTS "Build the headless smoke tests" ON)
 option(NPP_WARNINGS_AS_ERRORS "Treat warnings in port code as errors" OFF)
@@ -100,9 +111,20 @@ include(cmake/ThirdParty.cmake)
 include(cmake/GenerateLangTable.cmake)
 include(cmake/GenerateCommandTables.cmake)
 
+# What a plugin compiles against (linux/sdk/examples/HelloGtk uses it in-tree;
+# installed, the same comes from pkg-config notepad-plus-plus-gtk-plugin).
+add_library(nppgtk_sdk INTERFACE)
+target_include_directories(nppgtk_sdk INTERFACE ${NPP_SDK_INCLUDE_DIRS})
+target_link_libraries(nppgtk_sdk INTERFACE PkgConfig::GTK3)
+
 add_subdirectory(src)
 if(NPP_BUILD_TESTS)
   enable_testing()
+  # The SDK example is built (and loaded by the app_launch test) to keep it working.
+  set(NPP_EXAMPLE_PLUGINS_DIR "${CMAKE_BINARY_DIR}/example-plugins")
+  add_subdirectory(sdk/examples/HelloGtk)
+  set_target_properties(HelloGtk PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${NPP_EXAMPLE_PLUGINS_DIR}/HelloGtk")
+  target_compile_options(HelloGtk PRIVATE -Wall -Wextra -Wpedantic)
   add_subdirectory(tests)
 endif()
 

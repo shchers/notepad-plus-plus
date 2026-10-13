@@ -57,6 +57,11 @@ parts:
     build-packages:
       - ninja-build
       - pkg-config
+    # The plugin SDK is for building plugins, not for running the editor.
+    prime:
+      - -usr/include
+      - -usr/lib/*/pkgconfig
+      - -usr/share/doc/notepad-plus-plus-gtk/examples
     override-prime: |
       craftctl default
       # The launcher's Icon= is a theme name; the snap needs a path.

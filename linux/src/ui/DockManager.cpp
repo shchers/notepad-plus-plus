@@ -230,9 +230,37 @@ void DockManager::add(const std::string& id, const std::string& title, GtkWidget
     p.tabLabel = gtk_label_new(title.c_str());
     gtk_widget_show(p.tabLabel);
 
+    // A panel added after restoreState() (a plugin's) goes where it was.
+    if (auto it = pending_.find(id); it != pending_.end()) {
+        int a = 0, shown = 0, order = 0;
+        GdkRectangle r{-1, -1, 320, 480};
+        if (std::sscanf(it->second.c_str(), "%d,%d,%d,%d,%d,%d,%d", &a, &shown, &order, &r.x, &r.y, &r.width, &r.height) >= 3) {
+            p.area = area = static_cast<Area>(std::clamp(a, 0, idx(Area::Float)));
+            p.floatRect = r;
+        }
+        pending_.erase(it);
+    }
+
     panels_.push_back(std::move(owned));
-    GtkWidget* nb = area == Area::Float ? newFloatingNotebook(-1, -1, p.floatRect.width, p.floatRect.height) : sides_[idx(area)];
+    GtkWidget* nb = area == Area::Float ? newFloatingNotebook(p.floatRect.x, p.floatRect.y, p.floatRect.width, p.floatRect.height)
+                                        : sides_[idx(area)];
     place(p, nb);
+}
+
+bool DockManager::has(const std::string& id) const
+{
+    return find(id) != nullptr;
+}
+
+std::vector<std::string> DockManager::pendingShown() const
+{
+    std::vector<std::string> out;
+    for (const auto& [id, v] : pending_) {
+        int a = 0, shown = 0;
+        if (std::sscanf(v.c_str(), "%d,%d", &a, &shown) == 2 && shown)
+            out.push_back(id);
+    }
+    return out;
 }
 
 void DockManager::place(Panel& p, GtkWidget* nb)
@@ -429,6 +457,9 @@ std::map<std::string, std::string> DockManager::saveState() const
     char buf[64];
     std::snprintf(buf, sizeof buf, "%d,%d,%d,%d", sizes_[0], sizes_[1], sizes_[2], sizes_[3]);
     out["sizes"] = buf;
+    // Panels of plugins that were not loaded (or not opened) this time.
+    for (const auto& [id, v] : pending_)
+        out.try_emplace(id, v);
     return out;
 }
 
@@ -442,6 +473,10 @@ void DockManager::restoreState(const std::map<std::string, std::string>& state)
         bool shown;
     };
     std::vector<Placed> placed;
+    pending_.clear();
+    for (const auto& [id, v] : state)
+        if (id != "sizes" && !find(id))
+            pending_[id] = v;
     for (auto& p : panels_) {
         auto it = state.find(p->id);
         if (it == state.end())

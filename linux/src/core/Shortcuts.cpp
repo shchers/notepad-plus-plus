@@ -7,6 +7,8 @@
 
 #include <sstream>
 
+#include <strings.h>
+
 namespace npp::core {
 
 namespace {
@@ -73,9 +75,31 @@ bool ShortcutsFile::load(const std::filesystem::path& file, std::string* error)
         if (!uc.name.empty() && !uc.command.empty())
             userCommands.push_back(std::move(uc));
     }
-    pluginCommandsXml_ = serialise(root.child("PluginCommands"));
+    for (const pugi::xml_node c : root.child("PluginCommands").children("PluginCommand")) {
+        PluginCommandKey pk{c.attribute("moduleName").as_string(), c.attribute("internalID").as_int(-1), readKey(c)};
+        if (!pk.module.empty() && pk.internalId >= 0)
+            pluginCommands.push_back(std::move(pk));
+    }
     scintillaKeysXml_ = serialise(root.child("ScintillaKeys"));
     return true;
+}
+
+const PluginCommandKey* ShortcutsFile::pluginKey(const std::string& module, int internalId) const
+{
+    for (const PluginCommandKey& c : pluginCommands)
+        if (c.internalId == internalId && strcasecmp(c.module.c_str(), module.c_str()) == 0)
+            return &c;
+    return nullptr;
+}
+
+void ShortcutsFile::setPluginKey(const std::string& module, int internalId, const KeyCombo& key)
+{
+    for (PluginCommandKey& c : pluginCommands)
+        if (c.internalId == internalId && strcasecmp(c.module.c_str(), module.c_str()) == 0) {
+            c.key = key;
+            return;
+        }
+    pluginCommands.push_back({module, internalId, key});
 }
 
 bool ShortcutsFile::save(const std::filesystem::path& file, std::string* error) const
@@ -119,13 +143,15 @@ bool ShortcutsFile::save(const std::filesystem::path& file, std::string* error) 
             n.append_attribute("FolderName") = c.folder.c_str();
         n.text().set(c.command.c_str());
     }
-    for (const std::string* kept : {&pluginCommandsXml_, &scintillaKeysXml_}) {
-        pugi::xml_document frag;
-        if (!kept->empty() && frag.load_string(kept->c_str()))
-            root.append_copy(frag.first_child());
+    pugi::xml_node pluginNode = root.append_child("PluginCommands");
+    for (const PluginCommandKey& c : pluginCommands) {
+        pugi::xml_node n = pluginNode.append_child("PluginCommand");
+        n.append_attribute("moduleName") = c.module.c_str();
+        n.append_attribute("internalID") = c.internalId;
+        writeKey(n, c.key);
     }
-    if (!root.child("PluginCommands"))
-        root.append_child("PluginCommands");
+    if (pugi::xml_document frag; !scintillaKeysXml_.empty() && frag.load_string(scintillaKeysXml_.c_str()))
+        root.append_copy(frag.first_child());
     if (!root.child("ScintillaKeys"))
         root.append_child("ScintillaKeys");
 

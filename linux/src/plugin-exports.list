@@ -1,0 +1,6 @@
+/* Symbols of the executable that plugins link against (linux/sdk/include/windows.h). */
+{
+    SendMessageW;
+    PostMessageW;
+    MessageBoxW;
+};

@@ -6,7 +6,8 @@
 // upstream, a second instance then runs without a session.
 //
 // Accepts the upstream command line switches that make sense here:
-//   -n<line> -c<column> -l<language> -ro -multiInst -nosession  and file names
+//   -n<line> -c<column> -l<language> -ro -multiInst -nosession -noPlugin
+//   -pluginMessage=<text>  and file names
 // plus --exit-after=<ms> (CI smoke tests) and --version / --help.
 
 #include "core/LanguageCatalog.h"
@@ -34,6 +35,9 @@ struct CommandLine {
     int exitAfterMs = -1;
     bool multiInst = false;
     bool noSession = false;
+    bool noPlugin = false;
+    std::string pluginMessage; // -pluginMessage="..."
+    std::string text;          // the whole command line (NPPM_GETCURRENTCMDLINE)
 };
 
 struct App {
@@ -55,6 +59,8 @@ void printUsage(const char* argv0)
         "  -ro               open files read-only\n"
         "  -multiInst        start a separate instance (without session)\n"
         "  -nosession        do not restore or save the session\n"
+        "  -noPlugin         do not load plugins\n"
+        "  -pluginMessage=\"text\"  pass text to the plugins (NPPN_CMDLINEPLUGINMSG)\n"
         "\n"
         "Other options:\n"
         "  --exit-after=MS   quit MS milliseconds after start (for smoke tests)\n"
@@ -72,6 +78,7 @@ Parse parseArgs(int argc, char** argv, const fs::path& cwd, CommandLine& cl, std
     bool endOfOptions = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
+        cl.text += (cl.text.empty() ? "" : " ") + (a.find(' ') != std::string::npos ? "\"" + a + "\"" : a);
         if (endOfOptions || a.empty() || a[0] != '-') {
             const fs::path p(a);
             cl.files.push_back(p.is_absolute() || cwd.empty() ? p : cwd / p);
@@ -93,7 +100,11 @@ Parse parseArgs(int argc, char** argv, const fs::path& cwd, CommandLine& cl, std
             cl.multiInst = true;
         } else if (a == "-nosession") {
             cl.noSession = true;
-        } else if (a == "-notabbar" || a == "-nosys" || a == "-noPlugin") {
+        } else if (a == "-noPlugin") {
+            cl.noPlugin = true;
+        } else if (a.rfind("-pluginMessage=", 0) == 0) {
+            cl.pluginMessage = a.substr(15);
+        } else if (a == "-notabbar" || a == "-nosys") {
             // Upstream switches accepted for compatibility; no-ops here.
         } else if (a.size() > 2 && a[1] == 'n') {
             cl.openOpts.line = std::atol(a.c_str() + 2);
@@ -132,6 +143,11 @@ int onCommandLine(GApplication* gapp, GApplicationCommandLine* cmd, App& app)
     const bool first = !app.window;
     if (first) {
         app.window = std::make_unique<npp::ui::MainWindow>(GTK_APPLICATION(gapp), app.langs, app.useSession);
+        app.window->setCommandLine(cl.text);
+        // Upstream order: plugins before the session, NPPN_READY once all is open.
+        if (!cl.noPlugin)
+            app.window->loadPlugins();
+        app.window->sendPluginCommandLine(cl.pluginMessage);
         app.window->restoreLastSession();
         if (app.window->documentCount() == 0)
             app.window->newDocument();
@@ -148,6 +164,10 @@ int onCommandLine(GApplication* gapp, GApplicationCommandLine* cmd, App& app)
     if (!cl.files.empty())
         app.window->openFiles(cl.files, cl.openOpts);
     app.window->present();
+    if (first)
+        app.window->pluginsReady();
+    else
+        app.window->sendPluginCommandLine(cl.pluginMessage);
     return 0;
 }
 

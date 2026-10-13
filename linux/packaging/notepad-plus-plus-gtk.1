@@ -3,7 +3,7 @@
 notepad-plus-plus-gtk \- Notepad++ source code editor, native GTK 3 port (preview)
 .SH SYNOPSIS
 .B notepad-plus-plus-gtk
-[\fB\-n\fIline\fR] [\fB\-c\fIcolumn\fR] [\fB\-l\fIlanguage\fR] [\fB\-ro\fR] [\fB\-multiInst\fR] [\fB\-nosession\fR] [\fIfile\fR ...]
+[\fB\-n\fIline\fR] [\fB\-c\fIcolumn\fR] [\fB\-l\fIlanguage\fR] [\fB\-ro\fR] [\fB\-multiInst\fR] [\fB\-nosession\fR] [\fB\-noPlugin\fR] [\fB\-pluginMessage=\fItext\fR] [\fIfile\fR ...]
 .SH DESCRIPTION
 .B notepad-plus-plus-gtk
 is an unofficial native Linux build of the Notepad++ source tree. It uses the
@@ -40,6 +40,14 @@ an additional instance neither restores nor saves the session.
 .B \-nosession
 Do not restore the previous session at start or save it at exit.
 .TP
+.B \-noPlugin
+Do not load plugins.
+.TP
+.BI \-pluginMessage= text
+Pass \fItext\fR to the plugins (Notepad++'s NPPN_CMDLINEPLUGINMSG). By
+convention it holds \fIname\fR=\fIvalue\fR pairs separated by semicolons,
+each name starting with the folder name of the plugin it is for.
+.TP
 .BI \-\-exit\-after= ms
 Quit after \fIms\fR milliseconds (used by automated smoke tests).
 .TP
@@ -49,8 +57,8 @@ Print the version and exit.
 .B \-\-help
 Print a usage summary and exit.
 .PP
-\fB\-notabbar\fR, \fB\-nosys\fR and \fB\-noPlugin\fR are accepted for
-compatibility and ignored.
+\fB\-notabbar\fR and \fB\-nosys\fR are accepted for compatibility and
+ignored.
 .SH FILES
 .TP
 .I ~/.config/notepad-plus-plus-gtk/settings.ini
@@ -92,11 +100,27 @@ shipped ones, in the Notepad++ format.
 .I ~/.config/notepad-plus-plus-gtk/themes/
 Additional Notepad++ theme files.
 .TP
+.I ~/.config/notepad-plus-plus-gtk/plugins/config/
+Plugin settings (Notepad++'s NPPM_GETPLUGINSCONFIGDIR).
+.TP
+.I ~/.local/share/notepad-plus-plus-gtk/plugins/
+.TQ
+.I /usr/lib/\fR<\fIarch\fR>\fI/notepad-plus-plus-gtk/plugins/
+Plugins, each in a folder of its own: \fIName\fR/\fIName\fR.so. The user's
+directory is searched first; a plugin found there is not loaded again from
+the system directory. Plugins > Plugins Admin installs, removes and
+deactivates plugins in the user's directory (deactivated ones are moved to
+\fIdisabled/\fR); Plugins > Open Plugins Folder opens it.
+.TP
 .I /usr/share/notepad-plus-plus-gtk/
 Shipped language, style and theme definitions.
 .SH ENVIRONMENT
 .TP
 .B NPP_GTK_DATA_DIR
 Overrides the directory holding the shipped definitions.
+.TP
+.B NPP_GTK_PLUGINS_DIR
+A colon-separated list of plugin directories searched instead of the two
+above; empty for none.
 .SH SEE ALSO
 https://notepad-plus-plus.org/

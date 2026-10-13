@@ -1,7 +1,8 @@
 # Notepad++ native Linux port — architecture and plan
 
-Status: **preview** — Phase 0 and Phase 2 (documents and sessions) done;
-Phase 1 (upstream core extraction) not started, as it needs upstream PRs
+Status: **preview** — Phases 0 and 2–6 done (documents and sessions,
+dialogs, panels, plugins, distribution); Phase 1 (upstream core extraction)
+not started, as it needs upstream PRs
 (October 2026, upstream 8.9.8.1 at `946f002`). This document records what the survey of the
 upstream source found, the architecture chosen, what the port already does,
 and a phased plan to feature parity.
@@ -131,8 +132,10 @@ Upstream uses `std::wstring` with `L"…"` literals everywhere. On Linux
   GTK labels, GLib), through helpers in `platform/`.
 - New port code uses UTF-8 `std::string` and `std::filesystem::path`, which
   is what GTK and the Linux kernel use.
-- Never persist `wchar_t` binary data. The plugin ABI must not depend on
-  `sizeof(wchar_t)` (§7).
+- Never persist `wchar_t` binary data. The plugin interface keeps
+  `wchar_t`, which is UTF-32 on Linux: plugins are rebuilt from source, so
+  only source compatibility matters, and `L""`/`wcs*` code keeps working
+  (§7).
 
 ---
 
@@ -148,11 +151,16 @@ flowchart TB
         UCD["PowerEditor/src/uchardet"]
         DATA["langs.model.xml · stylers.model.xml · installer/themes<br/>installer/nativeLang · bin/userDefineLangs · installer/functionList"]
         IDS["menuCmdID.h · resource.h · FindReplaceDlg_rc.h<br/>Parameters.cpp winKeyDefs · NppCommands.cpp"]
+        PIH["PluginInterface.h · Notepad_plus_msgs.h · Docking.h"]
     end
+    subgraph sdk["linux/sdk — plugin SDK"]
+        SHIM["windows.h · tchar.h · NppGtk.h"]
+    end
+    PLUG["plugins (.so)"]
     subgraph port["linux/src — the port"]
         CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup · UserLanguage<br/>Buffer · FileManager · Session · RecentFiles · NppConfig<br/>SearchEngine · FileSearch · EditOps · Shortcuts · Macro · Translator<br/>FunctionParser · Workspace"]
         PLAT["platform/ — OS services<br/>Paths (XDG) · TextCodec (uchardet+iconv) · Settings<br/>FileIO (GIO) · FileMonitor (inotify)"]
-        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator<br/>DockManager · Function List · Folder as Workspace · Document Map · Document List<br/>Character Panel · Clipboard History · Project Panels"]
+        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator<br/>DockManager · Function List · Folder as Workspace · Document Map · Document List<br/>Character Panel · Clipboard History · Project Panels<br/>PluginManager · plugin messages (SendMessageW)"]
         MAIN["main.cpp — CLI, single instance (D-Bus)"]
     end
     DATA --> CORE
@@ -165,6 +173,10 @@ flowchart TB
     LEX --> UI
     BRX --> SCI
     UI --> MAIN
+    PIH --> SHIM
+    SHIM --> PLUG
+    PIH --> UI
+    PLUG -- "SendMessage / beNotified" --> UI
 ```
 
 ### Layers
@@ -374,6 +386,9 @@ is active (upstream behaviour), with upstream's wording; "Update silently"
 reloads unmodified documents without asking. Reload keeps caret and scroll
 positions in every view.
 
+**Plugins** (`ui/PluginManager`, `ui/MainWindowPlugins.cpp`, Phase 5):
+upstream's plugin interface rebuilt from source; see §7.
+
 **Single instance**: `GtkApplication` owns the D-Bus name
 `org.notepad_plus_plus.NotepadPlusPlusGtk`; a later invocation forwards its
 argument list and working directory (`G_APPLICATION_HANDLES_COMMAND_LINE`)
@@ -404,7 +419,7 @@ on its own.
 | Themes | ✅ `stylers.model.xml` + all 22 upstream themes (Settings ▸ Theme, Style Configurator), user `stylers.xml`; GTK chrome follows dark themes |
 | Encodings | ✅ detect BOM / UTF-8 / legacy (uchardet); convert to UTF-8, UTF-8-BOM, UTF-16 LE/BE BOM |
 | Line endings | ✅ detect, convert (Windows / Unix / Mac) |
-| Menus and keys | ✅ upstream menu layout and command IDs; upstream default shortcuts; `shortcuts.xml` (from Windows too); Shortcut Mapper (main menu, macros, Run commands; filter, conflicts) |
+| Menus and keys | ✅ upstream menu layout and command IDs; upstream default shortcuts; `shortcuts.xml` (from Windows too); Shortcut Mapper (main menu, macros, Run commands, plugin commands; filter, conflicts) |
 | Search | ✅ Find / Replace / Find in Files / Mark dialog: Normal, Extended and Boost regex modes, match case, whole word, wrap, backward, in selection, `. matches newline`; Find Next/Previous (F3), Count, Replace, Replace All (one undo step), Replace All in All Opened Documents, Find All in current / all open documents, Find in Files and Replace in Files (filters, sub-folders, hidden folders), Mark All with bookmarks, Copy Marked Text; history kept; Select and Find Next (Ctrl+F3), volatile Find; search results panel (F7, F4/Shift+F4); incremental search bar (Ctrl+Alt+I) with highlight all; Style All Occurrences / One Token (5 styles), jump between them, copy styled text; Go to matching brace, select between braces |
 | Editing | ✅ folding (5 margin styles, fold all / current / by level), brace match, auto-indent, comments (line toggle/add/remove, block), duplicate/move lines, Line Operations (sort 14 ways incl. locale and column sort, remove duplicates, empty lines, join, split, insert blank line), Convert Case (8 modes), Blank Operations (trim, EOL to space, TAB ↔ space), multi-select all/next/undo/skip, Begin/End Select, Column Editor, multi-caret and column selection, bookmarks and bookmarked-line operations, insert date/time, open/search selected text, MD5/SHA hashes of the selection, read-only for all documents, go to line (Ctrl+G), zoom |
 | Macros and Run | ✅ record, play back, save (with a shortcut), run multiple times or to the end of the file, saved macros menu; Run dialog with upstream variables, saved Run commands with shortcuts — all in `shortcuts.xml`, compatible with Windows |
@@ -419,7 +434,7 @@ on its own.
 | Encoding ▸ ANSI | ➖ left out: "ANSI" is the system code page, UTF-8 on Linux, where upstream does nothing for it; Character Set covers legacy encodings |
 | Auto-completion, call tips, smart highlighting, tag matching | ❌ Phase 1 (code is portable) |
 | Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom |
-| Plugins | ❌ Phase 5 (§7) |
+| Plugins | ✅ upstream's plugin interface, rebuilt from source against the SDK in `linux/sdk` (§7, `docs/PLUGINS.md`): entry points, `NPPM_*` messages with upstream's return values, `NPPN_*` and forwarded `SCN_*` notifications, Plugins menu with check marks, default and `shortcuts.xml` keys, toolbar buttons, docked panels (GTK widgets) restored at start, `NPPM_MSGTOPLUGIN`, `SendMessage` from worker threads, `-noPlugin`, `-pluginMessage=`; Plugins Admin (installed and deactivated plugins, install from `.so`/`.zip`, remove, deactivate) and Import plugin(s); sample plugin, pkg-config file, `-dev` package |
 
 ---
 
@@ -464,7 +479,8 @@ on its own.
 | `WinControls/ClipboardHistory` | `ui/ClipboardHistoryPanel` | |
 | `WinControls/ProjectPanel` | `ui/ProjectPanel` + `core/Workspace` | |
 | `WinControls/Preference` | `ui/MainWindowDialogs.cpp` (`cmdPreferences`) | the pages for settings the port has |
-| `MISC/PluginsManager` | Phase 5 | new ABI, §7 |
+| `WinControls/PluginsAdmin` | `core/PluginFolders` (folders, install, deactivate), `platform/Zip`, `ui/MainWindowPlugins.cpp` (`cmdPluginsAdmin`) | local plugins only; no download list |
+| `MISC/PluginsManager` (`PluginsManager`, `PluginInterface.h`, `Notepad_plus_msgs.h`) | `ui/PluginManager` (loading, command IDs, notifications, handles, `SendMessageW`), `ui/MainWindowPlugins.cpp` (`NPPM_*` as in `NppBigSwitch.cpp`, menu, toolbar, panels), `linux/sdk` | upstream headers used unchanged; §7 |
 | `NppDarkMode`, `DarkMode/` | not ported | GTK theme + `gtk-application-prefer-dark-theme` |
 | `MISC/RegExt` (file associations) | `.desktop` `MimeType=` | handled by packaging |
 | `TrayIcon`, `MiniDumper`, auto-updater (WinGUp) | not ported | distro packaging handles updates |
@@ -533,15 +549,25 @@ items reordered by dragging, a Find dialog tab for Find in Projects (a
 prompt is used instead), panel-specific shortcuts beyond upstream's Switch
 to ... commands, and floating windows remembered across monitors.
 
-**Phase 5 — plugins** (§7).
+**Phase 5 — plugins (done).** Upstream's plugin interface, source
+compatible: plugins are `.so` files built against upstream's own headers on
+a small `<windows.h>` (`linux/sdk`), loaded from the user's and the system's
+plugin directories, with upstream's command numbering, notifications,
+messages (return values checked against `NppBigSwitch.cpp`), shortcuts in
+`shortcuts.xml`, toolbar buttons and docked panels. See §7 and
+`docs/PLUGINS.md`. Plugins Admin manages the plugins on disk (install from a
+`.so` or `.zip`, remove, deactivate into `plugins/disabled/`, status of each).
+Left for later: Plugins Admin's Available/Updates tabs (they need a list of
+Linux plugin builds to download), `NPPM_GETMENUHANDLE` (GTK menus are no `HMENU`s),
+external lexer plugins (`NPPN_EXTERNALLEXERBUFFER`, Lexilla `GetLexerCount`
+plugins), and tab-drag reordering reported as `NPPN_DOCORDERCHANGED`.
 
 **Phase 6 — distribution (done).** AppStream metainfo (validated in the test
 suite) and a configurable application ID that names the desktop file, icons
 and D-Bus name; a Flatpak manifest (GNOME runtime, host commands through
 `flatpak-spawn --host`), a snap recipe (core24, strict), signed PPA source
 packages per Ubuntu series from 22.04 on, and amd64 + arm64 builds of every
-format in CI. See `docs/PACKAGING.md`. Phase 5 (plugins) is still open and
-independent of this.
+format in CI. See `docs/PACKAGING.md`.
 
 ---
 
@@ -550,20 +576,59 @@ independent of this.
 Windows plugins are DLLs that receive `NppData { HWND _nppHandle,
 _scintillaMainHandle, _scintillaSecondHandle }` and drive the host with
 `::SendMessage(hwnd, NPPM_* | SCI_*, …)`. Binary compatibility is impossible
-on Linux. **Source compatibility for the common case** is achievable:
+on Linux; the port offers **source compatibility**: the same headers, entry
+points, structures, messages and notifications, rebuilt as a `.so`. The
+author's guide is `docs/PLUGINS.md`; this section records the design.
 
-- Same exported entry points (`setInfo`, `getName`, `getFuncsArray`,
-  `beNotified`, `messageProc`, `isUnicode`) from a `.so`.
-- `NppData` handles become opaque tokens. The SDK provides
-  `SendMessage`/`::SendMessage` that dispatches `NPPM_*` to the host and
-  `SCI_*` straight to Scintilla's direct function, so plugins that only use
-  messages recompile unchanged.
-- Strings: define the SDK's `TCHAR`-equivalent as `char16_t` (UTF-16, the
-  same width as Windows) so `NPPM_GETFULLCURRENTPATH` and friends keep their
-  buffer-size semantics. Do not use `wchar_t`, which is 4 bytes on Linux.
-- Plugins with their own Win32 dialogs need porting. Offer a small GTK dialog
-  helper and a docking-panel registration message (`NPPM_DMMREGASDCKDLG`
-  equivalent).
+**SDK** (`linux/sdk/include`, installed to `include/notepad-plus-plus-gtk`
+with `notepad-plus-plus-gtk-plugin.pc`). Upstream's `PluginInterface.h`,
+`Notepad_plus_msgs.h`, `Docking.h`, `dockingResource.h` and `menuCmdID.h`
+are used **unmodified**. They include `<windows.h>`, which the SDK provides:
+the Win32 *types* (`HWND` and other handles as distinct opaque pointer
+types, `WPARAM`/`LPARAM`/`LRESULT` pointer-sized, `LONG`/`DWORD` 32-bit as
+on Windows), a few macros, string helpers, and three functions the
+executable exports: `SendMessageW`, `PostMessageW`, `MessageBoxW`. The
+executable exports exactly those (`src/plugin-exports.list`,
+`-Wl,--dynamic-list`); plugins are loaded `RTLD_LOCAL`, so their own
+symbols do not clash. `NppGtk.h` adds what differs (widgets as handles,
+`DMN_CLOSE` delivery, icon strings) and three `NPPM_GTK*` messages.
+
+**Strings stay `wchar_t`.** An earlier plan proposed `char16_t` to keep
+Windows' 2-byte width. Since plugins are recompiled anyway, `wchar_t`
+(UTF-32 on Linux) keeps `L""` literals, `wcs*` functions and `std::wstring`
+working unchanged, and buffer sizes in the messages still count characters.
+The host converts with GLib's UCS-4 functions.
+
+**Handles.** `PluginManager` keeps a registry of what a handle is: the
+Notepad++ handle (→ `MainWindow::pluginMessage`), the two view handles (→
+the `EditorView` of the current tab of that view, resolved per call, so they
+survive the port's one-widget-per-tab model; `SCI_GETDIRECTFUNCTION` returns
+a trampoline through the handle for the same reason), and Scintilla widgets
+created with `NPPM_CREATESCINTILLAHANDLE` (real `ScintillaObject`s, so a
+plugin can pack them). Unknown handles answer 0. A `SendMessage` from
+another thread is marshalled to the GTK thread and waited for, as Windows
+does across threads.
+
+**Host side.** `ui/PluginManager` loads `<dir>/<Name>/<Name>.so` from the
+user's data directory, then the system one (`NPP_GTK_PLUGINS_DIR`
+overrides), calls the entry points in upstream's order, numbers commands
+from `ID_PLUGINS_CMD` as `PluginsManager::addInMenuFromPMIndex` does (and
+writes them back into `FuncItem::_cmdID`), keeps upstream's ID allocators,
+and broadcasts notifications (a copy per plugin, none after
+`NPPN_SHUTDOWN`). `ui/MainWindowPlugins.cpp` answers the messages — each
+case written from `NppBigSwitch.cpp`, including its quirks (for example
+`NPPM_GETPLUGINSCONFIGDIR` returns `TRUE`, not the length, once it copied)
+— and integrates plugins: commands in the `CommandTable` (a check mark can
+be added later, `CommandTable::makeCheckable`), the Plugins menu,
+`<PluginCommands>` in `shortcuts.xml` (now parsed instead of kept
+verbatim), toolbar buttons, and panels in the `DockManager`. The dock keeps
+the saved state of panels that are not registered yet, so a plugin panel
+returns to its place, and panels open at exit are reopened through their
+`dlgID` command after `NPPN_READY`, as upstream does.
+
+**What does not carry over**: Win32 user interface code (dialogs, resource
+scripts, `DockingDlgInterface`) and other Win32 calls. Plugins build their
+UI with GTK; `NPPM_GTKGETMAINWINDOW` gives the parent window.
 
 ---
 
@@ -663,8 +728,28 @@ one-line upstream PR:
   Projects; docking moves, floating, and the layout restored in a new
   window); localization switching and `shortcuts.xml` keys over the
   defaults.
+- `plugins`: a live `MainWindow` loads `tests/plugins/TestPlugin` (built
+  like a third-party plugin, against the SDK and GTK only) and a `.so` that
+  is not a plugin (reported, skipped). Checked from both sides: command
+  numbering and `_cmdID` write-back, `NPPN_TBMODIFICATION`/`NPPN_READY`,
+  the messages a plugin sends at `NPPN_READY` (version, paths with the
+  length-then-copy protocol, allocators and their limits,
+  `NPPM_MSGTOPLUGIN`, `PostMessage`), text through a view handle's direct
+  function, check marks (`_init2Check`, added later), default keys and
+  `<PluginCommands>` overrides (kept for plugins not loaded),
+  `NPPN_SHORTCUTREMAPPED`, `MessageBox`, `SendMessage` from a worker thread,
+  the file notifications (`NPPN_FILEBEFORESAVE` edits are saved), buffer
+  messages, Replace All's `NPPN_GLOBALMODIFIED`, a docked panel
+  (`DMN_CLOSE` when the user closes it), the shutdown sequence, the panel
+  reopened in a new window, and a window without plugins. Plugins Admin:
+  zip extraction (stored and deflated entries, Windows separators, unsafe
+  names refused), installing from a `.so`, a folder and both zip layouts,
+  refusing archives that are not one plugin, deactivate/activate/remove,
+  the version and status column (loaded, load error, hidden by a plugin of
+  the same name, deactivated), and asking before replacing.
 - `app_launch`: starts the real application (`-multiInst`) with a file and
-  `-n3`, then exits after 1.5 s through the normal exit path.
+  `-n3`, the test plugin and the SDK example loaded, then exits after 1.5 s
+  through the normal exit path. It uses a fresh configuration directory.
 - `single_instance`: on a private bus from `dbus-run-session`, a second
   invocation with a relative path hands over in well under a second and the
   file shows up in the primary's session; a `-multiInst` instance must not

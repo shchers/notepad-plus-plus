@@ -93,6 +93,10 @@ std::vector<std::pair<std::string, core::KeyCombo>> MainWindow::extraAccels() co
     for (std::size_t i = 0; i < shortcuts_.userCommands.size(); ++i)
         if (!shortcuts_.userCommands[i].key.empty())
             out.emplace_back("win.run-command::" + std::to_string(i), shortcuts_.userCommands[i].key);
+    if (plugins_)
+        for (const PluginManager::Command& c : plugins_->commands())
+            if (const core::KeyCombo k = pluginKey(c); !k.empty())
+                out.emplace_back(CommandTable::detailedName(c.cmdId), k);
     return out;
 }
 

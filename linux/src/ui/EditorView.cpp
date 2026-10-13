@@ -100,7 +100,7 @@ void EditorView::setupDefaults()
     execute(SCI_SETSCROLLWIDTH, 1);
     execute(SCI_SETSCROLLWIDTHTRACKING, 1);
     execute(SCI_SETCARETLINEVISIBLEALWAYS, 1);
-    execute(SCI_SETMODEVENTMASK, SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT);
+    setModEventMask(0);
 
     // Multi-editing and column mode, as in upstream defaults.
     execute(SCI_SETMULTIPLESELECTION, 1);
@@ -553,8 +553,17 @@ void EditorView::onNotify(GtkWidget*, gint, gpointer notification, gpointer self
     static_cast<EditorView*>(self)->handleNotify(*static_cast<const SCNotification*>(notification));
 }
 
+void EditorView::setModEventMask(int extra)
+{
+    // Upstream MODEVENTMASK_ON: what plugins get by default.
+    execute(SCI_SETMODEVENTMASK, static_cast<uptr_t>(SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT | SC_PERFORMED_UNDO | SC_PERFORMED_REDO |
+                                                     SC_MOD_CHANGEINDICATOR | extra));
+}
+
 void EditorView::handleNotify(const SCNotification& n)
 {
+    if (onScintillaNotify)
+        onScintillaNotify(n);
     switch (n.nmhdr.code) {
     case SCN_UPDATEUI:
         highlightBraces();

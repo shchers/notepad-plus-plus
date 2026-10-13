@@ -183,6 +183,10 @@ void MainWindow::registerPanelCommands()
 void MainWindow::onPanelShown(const std::string& id, bool shown)
 {
     cmds_.syncStates();
+    if (id.rfind("plugin:", 0) == 0) {
+        onPluginPanelShown(id, shown);
+        return;
+    }
     if (!shown || closing_)
         return;
     if (id == kFunctionList)

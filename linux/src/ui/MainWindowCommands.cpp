@@ -11,6 +11,8 @@
 #include "platform/Sandbox.h"
 
 #include "menuCmdID.h"
+#include <windows.h> // plugin SDK: NPPN_* codes
+#include "Notepad_plus_msgs.h"
 
 #include <algorithm>
 #include <set>
@@ -223,7 +225,10 @@ void MainWindow::moveTab(int to)
         return;
     GtkNotebook* nb = GTK_NOTEBOOK(notebooks_[t->viewIdx]);
     const int n = gtk_notebook_get_n_pages(nb);
-    gtk_notebook_reorder_child(nb, t->view->widget(), to < 0 ? n - 1 : std::clamp(to, 0, n - 1));
+    const int index = to < 0 ? n - 1 : std::clamp(to, 0, n - 1);
+    gtk_notebook_reorder_child(nb, t->view->widget(), index);
+    // Upstream: hwndFrom is the new index.
+    notifyPlugins(NPPN_DOCORDERCHANGED, reinterpret_cast<const void*>(static_cast<intptr_t>(index)), reinterpret_cast<uptr_t>(t->buf.get()));
 }
 
 // ============================================================================
@@ -320,9 +325,11 @@ void MainWindow::registerFileCommands()
         if (ask(trMessage("DeleteFileWarning", "message", "Are you sure you want to move the current file to the Recycle Bin?"),
                 b->path.string(), false) != Answer::Yes)
             return;
+        notifyPlugins(NPPN_FILEBEFOREDELETE, b);
         GFile* f = g_file_new_for_path(b->path.c_str());
         GError* err = nullptr;
         if (!g_file_trash(f, nullptr, &err)) {
+            notifyPlugins(NPPN_FILEDELETEFAILED, b);
             showError("Cannot move the file to the trash", err ? err->message : b->path.string());
             if (err)
                 g_error_free(err);
@@ -331,13 +338,29 @@ void MainWindow::registerFileCommands()
         }
         g_object_unref(f);
         monitors_.erase(b);
+        const std::shared_ptr<core::Buffer> keep = tabsOf(*b).front()->buf; // the ID stays valid for NPPN_FILEDELETED
         for (Tab* t : tabsOf(*b))
             removeTab(*t);
+        notifyPlugins(NPPN_FILEDELETED, keep.get());
         if (tabs_.empty())
             newDocument();
         refreshAll();
     });
     cmds_.add(IDM_FILE_LOADSESSION, [this] { cmdLoadSession(); });
+    cmds_.add(IDM_SETTING_PLUGINADM, [this] { cmdPluginsAdmin(); });
+    cmds_.add(IDM_SETTING_IMPORTPLUGIN, [this] { cmdImportPlugins(); });
+    // Plugins > Open Plugins Folder: where the user installs plugins.
+    cmds_.add(IDM_SETTING_OPENPLUGINSDIR, [this] {
+        const auto dirs = PluginManager::defaultDirs();
+        if (dirs.empty())
+            return;
+        std::error_code ec;
+        fs::create_directories(dirs.front(), ec);
+        gchar* uri = g_filename_to_uri(dirs.front().c_str(), nullptr, nullptr);
+        if (uri)
+            openUri(uri);
+        g_free(uri);
+    });
     cmds_.add(IDM_FILE_SAVESESSION, [this] { cmdSaveSession(); });
     cmds_.add(IDM_FILE_RESTORELASTCLOSEDFILE, [this] { cmdRestoreRecent(); });
     cmds_.add(IDM_OPEN_ALL_RECENT_FILE, [this] { cmdOpenAllRecent(); });
@@ -817,17 +840,20 @@ void MainWindow::renameBuffer(core::Buffer& b)
                     b.isUntitled() ? "New name:" : "New file name:", name)
         || name.empty() || name == b.name() || name.find('/') != std::string::npos)
         return;
+    notifyPlugins(NPPN_FILEBEFORERENAME, &b);
     if (b.isUntitled()) { // upstream renames the tab of an untitled document
         b.untitledName = name;
     } else {
         const fs::path target = b.path.parent_path() / name;
         std::error_code ec;
         if (fs::exists(target, ec)) {
+            notifyPlugins(NPPN_FILERENAMECANCEL, &b);
             showError("Cannot rename \"" + b.name() + "\"", target.string() + " already exists.");
             return;
         }
         fs::rename(b.path, target, ec);
         if (ec) {
+            notifyPlugins(NPPN_FILERENAMECANCEL, &b);
             showError("Cannot rename \"" + b.name() + "\"", ec.message());
             return;
         }
@@ -839,6 +865,7 @@ void MainWindow::renameBuffer(core::Buffer& b)
     }
     refreshBufferTabs(b);
     refreshAll();
+    notifyPlugins(NPPN_FILERENAMED, &b);
 }
 
 void MainWindow::cmdLoadSession()

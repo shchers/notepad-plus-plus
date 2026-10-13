@@ -30,7 +30,21 @@ All commands run from the repository root.
 /usr/share/icons/hicolor/{16..256}/apps/org.notepad_plus_plus.NotepadPlusPlusGtk.png
 /usr/share/man/man1/notepad-plus-plus-gtk.1.gz
 /usr/share/doc/notepad-plus-plus-gtk/{copyright,changelog.Debian.gz}
+
+# plugin SDK (route B: package notepad-plus-plus-gtk-dev)
+/usr/include/notepad-plus-plus-gtk/{windows.h,tchar.h,NppGtk.h}            <- linux/sdk/include
+/usr/include/notepad-plus-plus-gtk/{PluginInterface.h,Notepad_plus_msgs.h,Docking.h,dockingResource.h,menuCmdID.h}  <- upstream, unmodified
+/usr/include/notepad-plus-plus-gtk/{Scintilla.h,Sci_Position.h,ScintillaWidget.h}
+/usr/lib/<multiarch>/pkgconfig/notepad-plus-plus-gtk-plugin.pc
+/usr/share/doc/notepad-plus-plus-gtk[-dev]/examples/HelloGtk/
 ```
+
+Plugins are not part of any package. The editor loads them from
+`~/.local/share/notepad-plus-plus-gtk/plugins/` and from
+`/usr/lib/<multiarch>/notepad-plus-plus-gtk/plugins/` (found relative to the
+executable, like the data; `pkg-config --variable=plugindir
+notepad-plus-plus-gtk-plugin`), where a distribution can ship plugin
+packages. See `docs/PLUGINS.md`.
 
 `Depends:` is computed from the binary by `dpkg-shlibdeps`, so it is right
 for whichever release you build on. On Ubuntu 24.04 it resolves to GTK 3,
@@ -52,7 +66,8 @@ ctest --test-dir build --output-on-failure
 cpack --config build/CPackConfig.cmake -B build/pkg
 ```
 
-Result: `build/pkg/notepad-plus-plus-gtk_8.9.8.1-1_amd64.deb`.
+Result: `build/pkg/notepad-plus-plus-gtk_8.9.8.1-1_amd64.deb`, with the
+plugin SDK in the same package (route B splits it into `-dev`).
 `linux/scripts/build-native.sh --deb` does all four steps and copies the
 package into `dist/`. The Docker `artifact` target uses this route too:
 
@@ -98,10 +113,16 @@ What `linux/debian/` does:
 - `control`: `debhelper-compat (= 13)`; build-depends on cmake, ninja,
   pkg-config, libgtk-3-dev, plus xvfb/xauth for the test suite. The test
   dependencies carry the `<!nocheck>` build profile, so
-  `DEB_BUILD_OPTIONS=nocheck DEB_BUILD_PROFILES=nocheck` skips them.
+  `DEB_BUILD_OPTIONS=nocheck DEB_BUILD_PROFILES=nocheck` skips them. Two
+  binary packages: `notepad-plus-plus-gtk` and `notepad-plus-plus-gtk-dev`
+  (the plugin SDK, `Multi-Arch: same`), split by
+  `notepad-plus-plus-gtk{,-dev}.install`; `dh_missing --fail-missing`
+  catches files that land in neither.
 - `rules`: `dh $@ --sourcedirectory=linux --buildsystem=cmake+ninja` with
   `hardening=+all`; tests run through `dh_auto_test` (CTest, which uses
-  `xvfb-run` when there is no display).
+  `xvfb-run` when there is no display). debhelper installs `copyright` and
+  the changelog into both packages, so CMake's copies (for route A) are
+  excluded from `dh_missing`.
 - `changelog`: the single source of the Debian version. CMake warns at
   configure time if it lags behind upstream's `resource.h`.
 - `copyright`: DEP-5, covering Notepad++ (GPL-3), Scintilla/Lexilla, Boost,
@@ -202,7 +223,9 @@ Sandbox permissions, and why:
 | `--talk-name=org.freedesktop.Flatpak` | Run commands and "terminal here" run programs on the host with `flatpak-spawn --host` (`src/platform/Sandbox`) |
 
 Inside the sandbox the settings live in
-`~/.var/app/<app-id>/config/notepad-plus-plus-gtk/`. Opening documents and
+`~/.var/app/<app-id>/config/notepad-plus-plus-gtk/` and user plugins in
+`~/.var/app/<app-id>/data/notepad-plus-plus-gtk/plugins/` (they run against
+the runtime's libraries; see `docs/PLUGINS.md` §8). Opening documents and
 URLs, Trash and file monitoring work through GIO and the portals.
 
 **Flathub.** Flathub requires an application ID under a domain the
@@ -233,8 +256,9 @@ sudo snap install --dangerous dist/notepad-plus-plus-gtk_*.snap
 Confinement: the `home` and `removable-media` plugs give access to files;
 a `dbus` slot lets the running editor own its application ID for the single
 instance. Strict confinement cannot start programs outside the snap, so Run
-commands and "terminal here" report that. For the Snap Store, register the
-name first and raise `grade:` to `stable`.
+commands and "terminal here" report that. User plugins go to
+`~/snap/notepad-plus-plus-gtk/current/.local/share/notepad-plus-plus-gtk/plugins/`.
+For the Snap Store, register the name first and raise `grade:` to `stable`.
 
 ## Architectures
 

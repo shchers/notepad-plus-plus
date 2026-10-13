@@ -422,6 +422,11 @@ void FindDialog::setDirectory(const std::string& dir)
     setComboText(dir_, dir);
 }
 
+void FindDialog::setFilters(const std::string& filters)
+{
+    setComboText(filters_, filters);
+}
+
 void FindDialog::show(Tab tab)
 {
     if (EditorView* v = view()) {
@@ -654,6 +659,8 @@ int FindDialog::doReplaceAll(const core::FindOptions& o)
                              : core::Translator::format(misc("find-status-replaceall-nb-replaced", "Replace All: $INT_REPLACE$ occurrences were replaced"),
                                                         "$INT_REPLACE$", std::to_string(n));
     setStatus(msg + " " + scopeInfo(o));
+    if (n > 0 && host_.globallyModified)
+        host_.globallyModified(*v);
     if (host_.afterEdit)
         host_.afterEdit();
     return n;
@@ -675,6 +682,8 @@ int FindDialog::doReplaceAllInOpened(const core::FindOptions& in)
                 return n;
             }
             total += n;
+            if (n > 0 && host_.globallyModified)
+                host_.globallyModified(*v);
         }
     setStatus(total == 1 ? misc("find-status-replaceinopenedfiles-1-replaced", "Replace in Opened Files: 1 occurrence was replaced")
                          : core::Translator::format(misc("find-status-replaceinopenedfiles-nb-replaced",

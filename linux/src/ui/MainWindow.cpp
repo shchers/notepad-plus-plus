@@ -4,6 +4,8 @@
 #include "platform/Paths.h"
 
 #include "menuCmdID.h"
+#include <windows.h> // plugin SDK: NPPN_* codes
+#include "Notepad_plus_msgs.h"
 
 #include <algorithm>
 #include <cctype>
@@ -136,6 +138,11 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
         return ask(primary, secondary, false) == Answer::Yes;
     };
     host.afterEdit = [this] { refreshAll(); };
+    host.globallyModified = [this](EditorView& v) {
+        for (const auto& t : tabs_)
+            if (t->view.get() == &v) // upstream: hwndFrom is the buffer
+                notifyPlugins(NPPN_GLOBALMODIFIED, t->buf.get(), 0);
+    };
     host.record = [this](const core::MacroStep& step) {
         if (recording_)
             macro_.push_back(step);
@@ -153,6 +160,7 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
 
 MainWindow::~MainWindow()
 {
+    shutdownPlugins();
     closing_ = true;
     findDlg_.reset();
     if (dock_ && !gtk_widget_in_destruction(window_))
@@ -182,6 +190,8 @@ MainWindow::~MainWindow()
     for (auto& p : projects_)
         p.reset();
     dock_.reset();
+    plugins_.reset(); // their handles answer nothing from now on
+    pluginButtons_.clear();
     if (tabMenu_) {
         gtk_widget_destroy(tabMenu_);
         g_object_unref(tabMenu_);
@@ -252,8 +262,14 @@ void MainWindow::loadStyles()
     bool dark = false;
     if (const core::Style* def = styles_.globalById(STYLE_DEFAULT); def && def->bg)
         dark = luminance(*def->bg) < 0.4;
+    const bool changed = darkTheme_ != dark;
     darkTheme_ = dark;
     g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", dark, nullptr);
+    if (changed && plugins_) {
+        for (const auto& [cmd, item] : pluginButtons_)
+            refreshPluginToolbarButton(cmd); // light or dark icon
+        notifyPlugins(NPPN_DARKMODECHANGED);
+    }
 }
 
 std::vector<std::string> MainWindow::availableThemes() const
@@ -319,6 +335,7 @@ void MainWindow::buildMenus()
     refreshRecentMenu();
     refreshMacroMenu();
     refreshRunMenu();
+    refreshPluginMenu();
 
     GMenu* tm = buildTabMenu(tr_, cmds_);
     if (tabMenu_) {
@@ -477,6 +494,7 @@ void MainWindow::setLocalization(const std::string& fileName)
     findDlg_->retranslate();
     findBar_->retranslate();
     syncActionStates();
+    notifyPlugins(NPPN_NATIVELANGCHANGED);
 }
 
 void MainWindow::buildToolbar(GtkWidget* vbox)
@@ -614,6 +632,7 @@ void MainWindow::refreshAll()
     refreshTitle();
     refreshStatus();
     refreshPanels();
+    checkBufferActivated();
 }
 
 void MainWindow::refreshRecentMenu()
@@ -759,6 +778,7 @@ gboolean MainWindow::onDeleteEvent(GtkWidget*, GdkEvent*, gpointer self)
     auto* w = static_cast<MainWindow*>(self);
     if (!w->requestQuit())
         return TRUE; // cancelled: keep window open
+    w->shutdownPlugins(); // while their panels still exist
     // GTK destroys the window next: stop reacting to its widgets.
     w->closing_ = true;
     if (gtk_widget_get_visible(w->notebooks_[kSubView]) && gtk_widget_get_visible(w->notebooks_[kMainView]))

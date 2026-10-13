@@ -19,6 +19,24 @@ void CommandTable::add(int id, Fn run, State checked)
     c.checked = std::move(checked);
 }
 
+void CommandTable::makeCheckable(int id, State checked, GActionMap* map)
+{
+    auto it = cmds_.find(id);
+    if (it == cmds_.end())
+        return;
+    Cmd& c = it->second;
+    c.checked = std::move(checked);
+    if (!c.action)
+        return;
+    const bool enabled = g_action_get_enabled(G_ACTION(c.action));
+    // A stateless action cannot gain a state: replace it. Menus and
+    // accelerators refer to it by name and follow the new one.
+    g_action_map_remove_action(map, actionName(id).c_str());
+    c.action = nullptr;
+    install(map);
+    setEnabled(id, enabled);
+}
+
 bool CommandTable::run(int id)
 {
     auto it = cmds_.find(id);
@@ -378,7 +396,8 @@ std::vector<Top> mainMenu()
         {"settings", "Se&ttings", {
             C(IDM_SETTING_PREFERENCE, "Preferences..."), C(IDM_LANGSTYLE_CONFIG_DLG, "Style Configurator..."),
             C(IDM_SETTING_SHORTCUT_MAPPER, "Shortcut Mapper..."), SEP,
-            S("settings-import", "Import", {C(IDM_SETTING_IMPORTSTYLETHEMES, "Import style theme(s)..."),
+            S("settings-import", "Import", {C(IDM_SETTING_IMPORTPLUGIN, "Import plugin(s)..."),
+                                            C(IDM_SETTING_IMPORTSTYLETHEMES, "Import style theme(s)..."),
                                             C(kCmdImportConfig, "Import Notepad++ config.xml...")}),
             D("themes")}},
         {"tools", "T&ools", {
@@ -394,6 +413,10 @@ std::vector<Top> mainMenu()
         {"run", "&Run", {
             C(IDM_EXECUTE, "&Run..."), D("runCommands"), SEP,
             C(IDM_SETTING_SHORTCUT_MAPPER_RUN, "Modify Shortcut/Delete Command...")}},
+        {"Plugins", "&Plugins", {
+            D("plugins"), SEP,
+            C(IDM_SETTING_PLUGINADM, "Plugins Admin..."), SEP,
+            C(IDM_SETTING_OPENPLUGINSDIR, "Open Plugins Folder...")}},
         {"?", "&?", {
             C(IDM_CMDLINEARGUMENTS, "Command Line Arguments..."), SEP,
             C(IDM_HOMESWEETHOME, "Notepad++ Home"), C(IDM_PROJECTPAGE, "Notepad++ Project Page"),
@@ -446,7 +469,7 @@ struct Builder {
                 const std::string name = n.key;
                 GMenu** slot = name == "recent" ? &dyn.recent : name == "themes" ? &dyn.themes
                              : name == "languages" ? &dyn.languages : name == "userLanguages" ? &dyn.userLanguages
-                             : name == "macros" ? &dyn.macros : &dyn.runCommands;
+                             : name == "macros" ? &dyn.macros : name == "plugins" ? &dyn.plugins : &dyn.runCommands;
                 *slot = d;
                 sec = newSection(parent); // items after a dynamic part get their own section
                 any = true;

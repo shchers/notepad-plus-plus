@@ -41,7 +41,9 @@ public:
     GtkWidget* widget() const { return root_; }
 
     // Adds a hidden panel. `content` is owned by the dock from now on.
+    // A panel restoreState() knew is placed where it was saved instead.
     void add(const std::string& id, const std::string& title, GtkWidget* content, Area area);
+    bool has(const std::string& id) const;
     void setTitle(const std::string& id, const std::string& title);
     void show(const std::string& id, bool focus = true);
     void hide(const std::string& id);
@@ -57,7 +59,11 @@ public:
 
     // "id" -> "area,shown,order,x,y,w,h"; "sizes" -> "left,right,top,bottom".
     std::map<std::string, std::string> saveState() const;
+    // State of panels not added yet is kept: applied when they are added,
+    // saved again if they never are (plugins that were not loaded).
     void restoreState(const std::map<std::string, std::string>& state);
+    // Panels not added yet that were shown when the state was saved.
+    std::vector<std::string> pendingShown() const;
 
 private:
     struct Panel {
@@ -98,6 +104,7 @@ private:
     std::array<std::string, 5> menuLabels_{"Dock to Left", "Dock to Right", "Dock to Top", "Dock to Bottom", "Float"};
     std::string closeLabel_ = "Close";
     bool restoring_ = false;
+    std::map<std::string, std::string> pending_; // saved state of panels not added yet
 };
 
 } // namespace npp::ui

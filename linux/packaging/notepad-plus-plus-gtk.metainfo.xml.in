@@ -28,12 +28,13 @@
       <li>Two views, sessions, snapshots of unsaved documents and backup on save</li>
       <li>Function List, Folder as Workspace, Document Map, Project Panels and other docking panels</li>
       <li>All Notepad++ translations, printing, encoding detection</li>
+      <li>Plugins written for Notepad++'s plugin interface, rebuilt for Linux with GTK user interfaces</li>
     </ul>
     <p>
       Notepad++'s own files work as they are: shortcuts.xml, stylers.xml and
       themes, userDefineLang.xml, session.xml, function list rules and
-      workspaces, and a Windows config.xml can be imported. Plugins are not
-      supported yet.
+      workspaces, and a Windows config.xml can be imported. Windows plugin
+      DLLs do not run; a plugin's source builds against the port's SDK.
     </p>
     <p>
       This port is not endorsed by the Notepad++ project.

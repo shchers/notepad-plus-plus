@@ -46,12 +46,12 @@ else
 fi
 
 mkdir -p dist
-mv -f ../"${PKG}"_"${VERSION}"_*.deb dist/
+mv -f ../"${PKG}"_"${VERSION}"_*.deb ../"${PKG}"-dev_"${VERSION}"_*.deb dist/
 mv -f ../"${PKG}"-dbgsym_"${VERSION}"_*.ddeb dist/ 2>/dev/null || true
 mv -f ../"${PKG}"_"${VERSION}"*.{dsc,debian.tar.*,buildinfo,changes} dist/ 2>/dev/null || true
 rm -rf obj-* 2>/dev/null || true
 
 if command -v lintian >/dev/null; then
-    lintian --info --display-info dist/"${PKG}"_"${VERSION}"_*.deb || true
+    lintian --info --display-info dist/"${PKG}"_"${VERSION}"_*.deb dist/"${PKG}"-dev_"${VERSION}"_*.deb || true
 fi
 echo "Package(s):"; ls -1 dist/

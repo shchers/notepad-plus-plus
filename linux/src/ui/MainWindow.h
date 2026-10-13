@@ -10,11 +10,14 @@
 // MainWindowCommands.cpp  menu commands by upstream ID (NppCommands.cpp)
 // MainWindowDocs.cpp      tabs and buffers, file I/O, sessions, snapshots,
 //                         outside-change detection
+// MainWindowPlugins.cpp   plugins: the messages they send (NppBigSwitch.cpp),
+//                         their menu, keys, toolbar buttons and panels
 #pragma once
 
 #include "core/Buffer.h"
 #include "core/FileManager.h"
 #include "core/LanguageCatalog.h"
+#include "core/PluginFolders.h"
 #include "core/RecentFiles.h"
 #include "core/Session.h"
 #include "core/Shortcuts.h"
@@ -35,6 +38,7 @@
 #include "ui/EditorView.h"
 #include "ui/FindBar.h"
 #include "ui/FindDialog.h"
+#include "ui/PluginManager.h"
 #include "ui/SearchResults.h"
 
 #include <gtk/gtk.h>
@@ -42,6 +46,7 @@
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -165,12 +170,49 @@ public:
     ClipboardHistoryPanel& clipboardHistory() { return *clipHistory_; }
     ProjectPanel& projectPanel(int n) { return *projects_[static_cast<std::size_t>(n - 1)]; }
     // Panel IDs as in the dock: "functionList", "folderAsWorkspace", ...
+    // A plugin's panel is "plugin:<module>:<dlgID>".
     static constexpr const char* kSearchResultsPanel = "searchResults";
     void showSearchResults(bool show);
     // Opens a search result: the file (if needed), then selects the hit.
     void openResult(const ResultLocation& loc);
     // The open document showing a file (its active view), or nullptr.
     EditorView* viewForFile(const std::filesystem::path& p) const;
+
+    // ---- Plugins (MainWindowPlugins.cpp) ---------------------------------------
+    // Startup, unless -noPlugin: loads the plugins (PluginManager::defaultDirs()
+    // by default), adds their commands, menu and keys, then sends
+    // NPPN_TBMODIFICATION so they can add toolbar buttons.
+    void loadPlugins();
+    void loadPlugins(const std::vector<std::filesystem::path>& dirs);
+    // -pluginMessage=...: NPPN_CMDLINEPLUGINMSG.
+    void sendPluginCommandLine(const std::string& message);
+    // NPPM_GETCURRENTCMDLINE answers this.
+    void setCommandLine(std::string cmdLine) { cmdLine_ = std::move(cmdLine); }
+    // Startup done: NPPN_READY, then the plugin panels that were open at the
+    // last exit are opened again (through their plugin's command, as upstream).
+    void pluginsReady();
+    PluginManager* plugins() { return plugins_.get(); }
+    const std::vector<std::string>& pluginErrors() const { return pluginErrors_; }
+    // What SendMessage(nppData._nppHandle, msg, wParam, lParam) does.
+    sptr_t pluginMessage(unsigned msg, uptr_t wParam, sptr_t lParam);
+    // Plugin commands for the Shortcut Mapper, with their current keys.
+    struct PluginCommandInfo {
+        int cmdId = 0;
+        std::string name;
+        std::string plugin;  // menu name of the plugin
+        std::string module;  // "<Name>.so"
+        int internalId = 0;
+        core::KeyCombo key;
+    };
+    std::vector<PluginCommandInfo> pluginCommandList() const;
+    // NPPN_SHORTCUTREMAPPED after the Shortcut Mapper changed a plugin command's key.
+    void notifyShortcutRemapped(int cmdId);
+    // Plugins Admin: what a plugin folder's row says ("Loaded", "Deactivated",
+    // "Not loaded: <why>", ...).
+    std::string pluginFolderStatus(const core::PluginFolder& f, const std::vector<core::PluginFolder>& all) const;
+    // Installs plugin files (.so, .zip, folders) into the user's plugin
+    // directory, asking before replacing one. Returns how many were installed.
+    int installPlugins(const std::vector<std::filesystem::path>& files);
 
 private:
     struct Tab {
@@ -219,7 +261,8 @@ private:
     void applyLoaded(Tab& t, const std::filesystem::path& p, core::LoadedFile&& lf);
     // `codepage` forces a Windows code page (Encoding > Character Set), -1 detects.
     bool reloadBuffer(core::Buffer& b, std::string* error, int codepage = -1);
-    bool save(core::Buffer& b, bool saveAs);
+    // `to`: save there without asking (a plugin's NPPM_SAVECURRENTFILEAS).
+    bool save(core::Buffer& b, bool saveAs, const std::filesystem::path& to = {});
     bool saveCopyAs(core::Buffer& b);
     void renameBuffer(core::Buffer& b);
     // Closes the tabs `pick` selects in the active view (Close Multiple Documents).
@@ -244,6 +287,7 @@ private:
     void scheduleChangeCheck();
     void restartSnapshotTimer();
     Tab* openSessionFile(const core::SessionFile& f, int viewIdx);
+    bool quitConfirmed(); // requestQuit() between NPPN_BEFORESHUTDOWN and NPPN_CANCELSHUTDOWN
     bool sessionOn() const { return useSession_ && settings_.rememberSession; }
     // Upstream only offers snapshots together with "Remember current session".
     bool snapshotsOn() const { return sessionOn() && settings_.snapshot; }
@@ -307,6 +351,37 @@ private:
     {
         return tr_.message(box, attr, fallback);
     }
+
+    // Plugins (MainWindowPlugins.cpp)
+    struct PluginPanel {
+        std::string dockId;   // "plugin:<module>:<dlgID>"
+        std::string module;
+        int dlgId = 0;
+        GtkWidget* widget = nullptr;      // DockedWidgetData::hClient
+        const wchar_t* name = nullptr;    // the plugin's own strings, re-read on NPPM_DMMUPDATEDISPINFO
+        const wchar_t* addInfo = nullptr;
+        unsigned mask = 0;
+    };
+    void refreshPluginMenu();
+    core::KeyCombo pluginKey(const PluginManager::Command& c) const;
+    // hwndFrom = the Notepad++ handle, idFrom = the buffer (0 for none).
+    void notifyPlugins(unsigned code, const core::Buffer* b = nullptr);
+    void notifyPlugins(unsigned code, const void* hwndFrom, uptr_t idFrom);
+    void forwardScintillaNotification(const Tab& t, const SCNotification& n);
+    void checkBufferActivated();
+    void shutdownPlugins();   // NPPN_SHUTDOWN once, before the window goes
+    core::Buffer* bufferFromId(uptr_t id) const;
+    int langTypeOf(const core::Buffer& b) const;
+    bool setLangType(core::Buffer& b, int langType);
+    void setPluginCheck(int cmdId, bool on);
+    void addPluginToolbarButton(int cmdId, const char* icon, const char* darkIcon);
+    void refreshPluginToolbarButton(int cmdId);
+    sptr_t pluginDockMessage(unsigned msg, uptr_t wParam, sptr_t lParam);
+    PluginPanel* pluginPanel(const void* widget);
+    void onPluginPanelShown(const std::string& id, bool shown);
+    void cmdPluginsAdmin();
+    void cmdImportPlugins();
+    std::vector<std::filesystem::path> choosePluginFiles(GtkWindow* parent);
 
     // Macros and Run (MainWindowMacros.cpp)
     void registerMacroCommands();
@@ -408,6 +483,21 @@ private:
     guint changeCheckIdle_ = 0;
     guint snapshotTimer_ = 0;
     GtkPrintSettings* printSettings_ = nullptr; // kept between print jobs, as upstream keeps its DEVMODE
+
+    std::unique_ptr<PluginManager> plugins_;
+    std::vector<std::string> pluginErrors_;
+    std::vector<PluginPanel> pluginPanels_;
+    std::map<int, bool> pluginChecked_;           // plugin command -> check mark
+    std::map<int, GtkToolItem*> pluginButtons_;    // plugin command -> toolbar button
+    std::map<int, std::pair<std::string, std::string>> pluginIcons_; // command -> (icon, dark icon)
+    const core::Buffer* activatedBuffer_ = nullptr; // last NPPN_BUFFERACTIVATED
+    std::string cmdLine_;
+    std::wstring pluginMessageArg_;               // -pluginMessage, alive while plugins may read it
+    int modEventFlags_ = 0;                       // NPPM_ADDSCNMODIFIEDFLAGS
+    int lineNumberWidthMode_ = 0;                 // NPPM_SETLINENUMBERWIDTHMODE
+    bool pluginsShutDown_ = false;
+    bool tabBarHidden_ = false;
+    bool hidingPluginPanel_ = false;               // NPPM_DMMHIDE, not the user
 };
 
 } // namespace npp::ui

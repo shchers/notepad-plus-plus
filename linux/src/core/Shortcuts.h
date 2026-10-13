@@ -1,7 +1,7 @@
 // shortcuts.xml — upstream's file for customised menu shortcuts, macros, Run
 // commands, plugin and Scintilla key bindings (NppParameters::feedShortcut,
-// feedMacros, feedUserCmds, writeShortcuts). Read and written in the same
-// format; the PluginCommands and ScintillaKeys sections are kept verbatim.
+// feedMacros, feedUserCmds, feedPluginCustomizedCmds, writeShortcuts). Read
+// and written in the same format; the ScintillaKeys section is kept verbatim.
 //
 // CommandKeys holds the effective shortcut of every menu command: upstream's
 // defaults (winKeyDefs, generated) with shortcuts.xml's changes on top.
@@ -40,17 +40,29 @@ struct UserCommand {
     std::string command;
 };
 
+// A plugin command's changed shortcut: <PluginCommand moduleName="X.so"
+// internalID="<index in the plugin's FuncItem array>" .../>.
+struct PluginCommandKey {
+    std::string module;
+    int internalId = 0;
+    KeyCombo key;
+    bool operator==(const PluginCommandKey&) const = default;
+};
+
 class ShortcutsFile {
 public:
     std::vector<CommandKey> commands; // changed menu shortcuts only
     std::vector<SavedMacro> macros;
     std::vector<UserCommand> userCommands;
+    // Kept for plugins that are not loaded too, as upstream does.
+    std::vector<PluginCommandKey> pluginCommands;
+    const PluginCommandKey* pluginKey(const std::string& module, int internalId) const;
+    void setPluginKey(const std::string& module, int internalId, const KeyCombo& key);
 
     bool load(const std::filesystem::path& file, std::string* error = nullptr);
     bool save(const std::filesystem::path& file, std::string* error = nullptr) const;
 
 private:
-    std::string pluginCommandsXml_;
     std::string scintillaKeysXml_;
 };
 

@@ -8,6 +8,8 @@
 #include "ui/ShortcutDialog.h"
 
 #include "menuCmdID.h"
+#include <windows.h> // plugin SDK: NPPN_* codes
+#include "Notepad_plus_msgs.h"
 
 #include <algorithm>
 
@@ -18,7 +20,7 @@ namespace npp::ui {
 namespace {
 
 enum Col { kColName, kColKey, kColCategory, kColId, kColNth, kColCount };
-enum MapperTab { kTabMenu = 0, kTabMacros, kTabRun };
+enum MapperTab { kTabMenu = 0, kTabMacros, kTabRun, kTabPlugins, kTabCount };
 
 std::string lower(std::string s)
 {
@@ -68,9 +70,17 @@ private:
     std::map<int, CommandInfo> infos_;
     GtkWidget* dlg_ = nullptr;
     GtkWidget* tabs_ = nullptr;
-    GtkWidget* views_[3] = {};
-    GtkListStore* stores_[3] = {};
-    GtkTreeModel* filters_[3] = {};
+    GtkWidget* views_[kTabCount] = {};
+    GtkListStore* stores_[kTabCount] = {};
+    GtkTreeModel* filters_[kTabCount] = {};
+    std::vector<MainWindow::PluginCommandInfo> plugins_; // refreshed by fill()
+    const MainWindow::PluginCommandInfo* plugin(int cmdId) const
+    {
+        for (const auto& p : plugins_)
+            if (p.cmdId == cmdId)
+                return &p;
+        return nullptr;
+    }
     GtkWidget* filter_ = nullptr;
     GtkWidget* info_ = nullptr;
     GtkWidget* deleteBtn_ = nullptr;
@@ -95,6 +105,11 @@ void ShortcutMapper::fill()
     for (std::size_t i = 0; i < file_.userCommands.size(); ++i)
         gtk_list_store_insert_with_values(stores_[kTabRun], nullptr, -1, kColName, file_.userCommands[i].name.c_str(), kColKey,
                                           file_.userCommands[i].key.toString().c_str(), kColCategory, "", kColId, static_cast<int>(i), kColNth, 0, -1);
+    plugins_ = w_.pluginCommandList();
+    for (const auto& p : plugins_)
+        gtk_list_store_insert_with_values(stores_[kTabPlugins], nullptr, -1, kColName, core::Translator::plain(p.name).c_str(), kColKey,
+                                          p.key.toString().c_str(), kColCategory, core::Translator::plain(p.plugin).c_str(), kColId, p.cmdId,
+                                          kColNth, 0, -1);
 }
 
 std::string ShortcutMapper::conflicts(const core::KeyCombo& k, int tab, int id, int nth) const
@@ -106,6 +121,7 @@ std::string ShortcutMapper::conflicts(const core::KeyCombo& k, int tab, int id, 
         out += (out.empty() ? "" : "\n") + where + "  |  " + name;
     };
     const std::string menuTab = t("MainMenuTab", "Main menu"), macroTab = t("MacrosTab", "Macros"), runTab = t("RunCommandsTab", "Run commands");
+    const std::string pluginTab = t("PluginCommandsTab", "Plugin commands");
     for (const core::CommandKey& c : keys_.conflicts(k, tab == kTabMenu ? id : 0, tab == kTabMenu ? nth : -1))
         if (cmds_.has(c.id))
             add(menuTab, commandName(c.id));
@@ -115,6 +131,9 @@ std::string ShortcutMapper::conflicts(const core::KeyCombo& k, int tab, int id, 
     for (std::size_t i = 0; i < file_.userCommands.size(); ++i)
         if (file_.userCommands[i].key == k && !(tab == kTabRun && static_cast<int>(i) == id))
             add(runTab, file_.userCommands[i].name);
+    for (const auto& p : plugins_)
+        if (p.key == k && !(tab == kTabPlugins && p.cmdId == id))
+            add(pluginTab, core::Translator::plain(p.name));
     return out;
 }
 
@@ -131,7 +150,7 @@ bool ShortcutMapper::selected(int& id, int& nth) const
 void ShortcutMapper::updateInfo()
 {
     int id = 0, nth = 0;
-    gtk_widget_set_sensitive(deleteBtn_, tab() != kTabMenu);
+    gtk_widget_set_sensitive(deleteBtn_, tab() == kTabMacros || tab() == kTabRun);
     if (!selected(id, nth)) {
         gtk_label_set_text(GTK_LABEL(info_), "");
         return;
@@ -143,6 +162,9 @@ void ShortcutMapper::updateInfo()
                 k = c.key;
     } else if (tab() == kTabMacros) {
         k = file_.macros[static_cast<std::size_t>(id)].key;
+    } else if (tab() == kTabPlugins) {
+        if (const auto* p = plugin(id))
+            k = p->key;
     } else {
         k = file_.userCommands[static_cast<std::size_t>(id)].key;
     }
@@ -176,6 +198,13 @@ void ShortcutMapper::modify()
     } else if (tb == kTabMacros) {
         e.name = file_.macros[static_cast<std::size_t>(id)].name;
         e.key = file_.macros[static_cast<std::size_t>(id)].key;
+    } else if (tb == kTabPlugins) {
+        const auto* p = plugin(id);
+        if (!p)
+            return;
+        e.name = core::Translator::plain(p->name);
+        e.nameEditable = false;
+        e.key = p->key;
     } else {
         e.name = file_.userCommands[static_cast<std::size_t>(id)].name;
         e.key = file_.userCommands[static_cast<std::size_t>(id)].key;
@@ -188,6 +217,12 @@ void ShortcutMapper::modify()
         return;
     if (tb == kTabMenu) {
         keys_.set(id, nth, e.key);
+    } else if (tb == kTabPlugins) {
+        const auto* p = plugin(id);
+        file_.setPluginKey(p->module, p->internalId, e.key);
+        save();
+        w_.notifyShortcutRemapped(id);
+        return;
     } else if (tb == kTabMacros) {
         file_.macros[static_cast<std::size_t>(id)].name = e.name;
         file_.macros[static_cast<std::size_t>(id)].key = e.key;
@@ -203,9 +238,16 @@ void ShortcutMapper::clear()
     int id = 0, nth = 0;
     if (!selected(id, nth))
         return;
-    if (tab() == kTabMenu)
+    if (tab() == kTabMenu) {
         keys_.set(id, nth, {});
-    else if (tab() == kTabMacros)
+    } else if (tab() == kTabPlugins) {
+        if (const auto* p = plugin(id)) {
+            file_.setPluginKey(p->module, p->internalId, {});
+            save();
+            w_.notifyShortcutRemapped(id);
+        }
+        return;
+    } else if (tab() == kTabMacros)
         file_.macros[static_cast<std::size_t>(id)].key = {};
     else
         file_.userCommands[static_cast<std::size_t>(id)].key = {};
@@ -215,7 +257,7 @@ void ShortcutMapper::clear()
 void ShortcutMapper::remove()
 {
     int id = 0, nth = 0;
-    if (!selected(id, nth) || tab() == kTabMenu)
+    if (!selected(id, nth) || (tab() != kTabMacros && tab() != kTabRun))
         return;
     if (tab() == kTabMacros)
         file_.macros.erase(file_.macros.begin() + id);
@@ -236,14 +278,15 @@ void ShortcutMapper::run(GtkWindow* parent, int initialTab)
 
     filter_ = gtk_search_entry_new();
     tabs_ = gtk_notebook_new();
-    const std::string tabNames[] = {t("MainMenuTab", "Main menu"), t("MacrosTab", "Macros"), t("RunCommandsTab", "Run commands")};
-    for (int i = 0; i < 3; ++i) {
+    const std::string tabNames[] = {t("MainMenuTab", "Main menu"), t("MacrosTab", "Macros"), t("RunCommandsTab", "Run commands"),
+                                    t("PluginCommandsTab", "Plugin commands")};
+    for (int i = 0; i < kTabCount; ++i) {
         stores_[i] = gtk_list_store_new(kColCount, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
         filters_[i] = gtk_tree_model_filter_new(GTK_TREE_MODEL(stores_[i]), nullptr);
         GtkWidget* view = gtk_tree_view_new_with_model(filters_[i]);
         views_[i] = view;
         const std::string cols[] = {t("ColumnName", "Name"), t("ColumnShortcut", "Shortcut"), t("ColumnCategory", "Category")};
-        for (int c = 0; c < (i == kTabMenu ? 3 : 2); ++c) {
+        for (int c = 0; c < (i == kTabMenu || i == kTabPlugins ? 3 : 2); ++c) {
             GtkTreeViewColumn* col = gtk_tree_view_column_new_with_attributes(cols[c].c_str(), gtk_cell_renderer_text_new(), "text", c, nullptr);
             gtk_tree_view_column_set_resizable(col, TRUE);
             gtk_tree_view_column_set_sort_column_id(col, c);
@@ -308,7 +351,7 @@ void ShortcutMapper::run(GtkWindow* parent, int initialTab)
     while (g_main_context_iteration(nullptr, FALSE)) { // the pending idle above uses `this`
     }
     gtk_widget_destroy(dlg_);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < kTabCount; ++i) {
         g_object_unref(filters_[i]);
         g_object_unref(stores_[i]);
     }
@@ -600,6 +643,7 @@ void MainWindow::restyleAll()
     results_->applyStyles(styles_);
     panelSource_ = nullptr; // the Document Map takes the new styles
     refreshPanels();
+    notifyPlugins(NPPN_WORDSTYLESUPDATED, activeBuffer());
 }
 
 void MainWindow::cmdStyleConfigurator()

@@ -34,4 +34,18 @@ Description: Notepad++ source code editor - native GTK 3 port (preview)
  single-instance mode compatible with Notepad++ switches. Notepad++'s
  shortcuts.xml, stylers.xml, themes and userDefineLang.xml work unchanged.
  .
- Plugins and auto-completion are not yet ported.
+ Plugins use Notepad++'s plugin interface, rebuilt for Linux with the SDK in
+ notepad-plus-plus-gtk-dev. Auto-completion is not yet ported.
+
+Package: notepad-plus-plus-gtk-dev
+Architecture: any
+Multi-Arch: same
+Depends: libgtk-3-dev, ${misc:Depends}
+Suggests: notepad-plus-plus-gtk
+Description: Notepad++ source code editor - GTK 3 port, plugin SDK
+ Headers and a pkg-config file (notepad-plus-plus-gtk-plugin) to build
+ plugins for notepad-plus-plus-gtk: Notepad++'s own plugin interface
+ (PluginInterface.h, Notepad_plus_msgs.h, Docking.h, menuCmdID.h and
+ Scintilla.h, unchanged) on a small windows.h that provides the Win32 types
+ and SendMessage. Plugins keep their source, messages and notifications and
+ build their user interface with GTK. A sample plugin is included.

@@ -41,6 +41,8 @@ struct FindHost {
     // Yes/No question; false = No.
     std::function<bool(const std::string& primary, const std::string& secondary)> confirm;
     std::function<void()> afterEdit; // documents changed (refresh tabs/status)
+    // Replace All changed this document (upstream NPPN_GLOBALMODIFIED).
+    std::function<void(EditorView&)> globallyModified;
 };
 
 class FindDialog {
@@ -62,6 +64,7 @@ public:
     core::FindOptions options() const;  // from the fields
     void setSearchText(const std::string& s);
     void setDirectory(const std::string& dir);
+    void setFilters(const std::string& filters); // Find in Files filters
     const std::string& status() const { return status_; }
 
     // Search > Find Next / Previous (F3 / Shift+F3) with the dialog's options.

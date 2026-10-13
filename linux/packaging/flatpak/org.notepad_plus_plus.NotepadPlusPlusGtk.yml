@@ -25,6 +25,11 @@ finish-args:
   # Run commands and "terminal here" start programs on the host through
   # flatpak-spawn --host (src/platform/Sandbox).
   - --talk-name=org.freedesktop.Flatpak
+# The plugin SDK is for building plugins, not for running the editor.
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/doc/notepad-plus-plus-gtk/examples
 modules:
   - name: notepad-plus-plus-gtk
     buildsystem: cmake-ninja

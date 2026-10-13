@@ -282,6 +282,8 @@ void testShortcutsAndMacros()
     // "\r" then "\n" typed separately become one SCI_NEWLINE (upstream getActions).
     CHECK(sf.macros[0].steps.size() == 3 && sf.macros[0].steps[1].message == SCI_NEWLINE);
     CHECK(sf.userCommands.size() == 1 && sf.userCommands[0].command == "xdg-open \"$(FULL_CURRENT_PATH)\"");
+    CHECK(sf.pluginCommands.size() == 1 && sf.pluginCommands[0].module == "x.dll" && sf.pluginCommands[0].internalId == 1);
+    CHECK(sf.pluginKey("X.DLL", 1) && !sf.pluginKey("x.dll", 2)); // module names compare case-insensitively, as upstream
     CHECK(sf.save(f));
     const std::string written = readText(f);
     CHECK(written.find("x.dll") != std::string::npos && written.find("ScintID=\"2180\"") != std::string::npos);
@@ -315,7 +317,7 @@ void testTranslator()
     CHECK(t.subMenu("edit-lineOperations", "?") == "&Line Operations");
     CHECK(t.dialog("Find", IDFINDWHAT, "?") != "?" || t.dialog("Find", 1620, "?") == "&Find what:");
     CHECK(t.dialogAttr("Find", "titleReplace", "?") == "Replace");
-    CHECK(t.dialog("Preference/Global", 6123, "?") == "Localization");
+    CHECK(core::Translator::plain(t.dialog("Preference/Global", 6123, "?")) == "Localization"); // upstream now has "&Localization"
     CHECK(t.command(999999, "fallback") == "fallback");
     CHECK(core::Translator::toMnemonic("Save &As...\tCtrl+Alt+S") == "Save _As...");
     CHECK(core::Translator::toMnemonic("Copy && paste my_file") == "Copy & paste my__file");

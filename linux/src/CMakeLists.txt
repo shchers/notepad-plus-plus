@@ -13,6 +13,7 @@ add_library(nppgtk_core STATIC
   platform/Sandbox.cpp
   platform/Settings.cpp
   platform/TextCodec.cpp
+  platform/Zip.cpp
   core/EditOps.cpp
   core/FileManager.cpp
   core/FileSearch.cpp
@@ -20,6 +21,7 @@ add_library(nppgtk_core STATIC
   core/Workspace.cpp
   core/KeyCombo.cpp
   core/Macro.cpp
+  core/PluginFolders.cpp
   core/SearchEngine.cpp
   core/Shortcuts.cpp
   core/Translator.cpp
@@ -47,7 +49,9 @@ add_library(nppgtk_core STATIC
   ui/MainWindowDialogs.cpp
   ui/MainWindowMacros.cpp
   ui/MainWindowPanels.cpp
+  ui/MainWindowPlugins.cpp
   ui/MainWindowPrint.cpp
+  ui/PluginManager.cpp
   ui/ProjectPanel.cpp
   ui/MainWindowDocs.cpp
   ui/SearchResults.cpp
@@ -57,16 +61,21 @@ target_include_directories(nppgtk_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${NPP_GENERATED_DIR}"
   "${NPP_SRC}"                       # upstream ID headers: menuCmdID.h, resource.h
-  "${NPP_SRC}/ScintillaComponent")  # FindReplaceDlg_rc.h
+  "${NPP_SRC}/ScintillaComponent"   # FindReplaceDlg_rc.h
+  ${NPP_SDK_INCLUDE_DIRS})          # plugin SDK: <windows.h> shim, PluginInterface.h
 target_compile_definitions(nppgtk_core PUBLIC
   NPP_VERSION="${NPP_VERSION}"
   NPP_APP_ID="${NPP_APP_ID}"
   NPP_EXE_NAME="${NPP_EXE_NAME}"
   NPP_DATA_SUBDIR="${NPP_DATA_SUBDIR}"
+  NPP_PLUGINS_SUBDIR="${NPP_PLUGINS_SUBDIR}"
   NPP_SCINTILLA_VERSION="${NPP_SCINTILLA_VERSION}"
   NPP_LEXILLA_VERSION="${NPP_LEXILLA_VERSION}")
 target_link_libraries(nppgtk_core PUBLIC
-  npp_scintilla npp_lexilla npp_pugixml npp_uchardet PkgConfig::GTK3)
+  npp_scintilla npp_lexilla npp_pugixml npp_uchardet PkgConfig::GTK3 ${CMAKE_DL_LIBS})
+# Plugins call SendMessageW, PostMessageW and MessageBoxW in the executable
+# (every executable linking the core, so the tests can load plugins too).
+target_link_options(nppgtk_core INTERFACE "LINKER:--dynamic-list=${CMAKE_CURRENT_SOURCE_DIR}/plugin-exports.list")
 target_compile_options(nppgtk_core PRIVATE -Wall -Wextra -Wpedantic
   $<$<BOOL:${NPP_WARNINGS_AS_ERRORS}>:-Werror>)
 

@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@/@NPP_EXE_NAME@
+plugindir=${prefix}/@NPP_PLUGINS_SUBDIR@
+
+Name: notepad-plus-plus-gtk-plugin
+Description: Plugin SDK of the Notepad++ GTK port (upstream plugin headers on a small windows.h)
+Version: @NPP_VERSION@
+Requires: gtk+-3.0
+Cflags: -I${includedir}

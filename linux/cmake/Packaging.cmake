@@ -25,10 +25,11 @@ set(CPACK_PACKAGE_CONTACT "Sergii Shcherbakov <shchers@gmail.com>"
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Notepad++ source code editor - native GTK 3 port (preview)")
 set(CPACK_PACKAGE_DESCRIPTION
 "Unofficial native Linux build of the Notepad++ source tree using the GTK 3
-backend of Scintilla. This preview provides tabbed editing, syntax
-highlighting for all Notepad++ languages via Lexilla, Notepad++ colour
-themes, encoding detection, and Boost-regex find/replace. Plugins, docking
-panels, macros and sessions are not yet ported.")
+backend of Scintilla: tabbed editing in two views, syntax highlighting for
+all Notepad++ languages via Lexilla, Notepad++ colour themes, encoding
+detection, Boost-regex find/replace, macros, sessions, docking panels and
+plugins built from source with the included SDK
+(pkg-config notepad-plus-plus-gtk-plugin). Auto-completion is not yet ported.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://notepad-plus-plus.org/")
 set(CPACK_PACKAGING_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 set(CPACK_STRIP_FILES ON)

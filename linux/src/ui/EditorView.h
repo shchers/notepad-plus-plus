@@ -108,6 +108,8 @@ public:
     std::function<void()> onTextModified;             // text inserted or deleted
     std::function<void()> onFocusIn;
     std::function<void(sptr_t position)> onDoubleClick;
+    // Every Scintilla notification, before the view handles it (plugins).
+    std::function<void(const SCNotification&)> onScintillaNotify;
     // SCN_MACRORECORD while recording (SCI_STARTRECORD).
     std::function<void(int message, uptr_t wParam, sptr_t lParam)> onMacroRecord;
     bool showLineNumbers = true;
@@ -116,6 +118,9 @@ public:
     // 2 Circle tree, 3 Box tree, 4 None.
     void setFoldStyle(int style);
     void setBookmarkMarginVisible(bool on);
+    // SCN_MODIFIED events: upstream's MODEVENTMASK_ON plus `extra`
+    // (NPPM_ADDSCNMODIFIEDFLAGS).
+    void setModEventMask(int extra);
 
 private:
     static void onNotify(GtkWidget*, gint, gpointer notification, gpointer self);
