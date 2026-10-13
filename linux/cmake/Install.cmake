@@ -1,7 +1,8 @@
 # Install layout (FHS):
 #   bin/notepad-plus-plus-gtk
 #   share/notepad-plus-plus-gtk/{langs.model.xml,stylers.model.xml,themes/,
-#                                nativeLang/,userDefineLangs/,functionList/}
+#                                nativeLang/,userDefineLangs/,functionList/,
+#                                autoCompletion/}
 #   share/applications/<app-id>.desktop
 #   share/metainfo/<app-id>.metainfo.xml
 #   share/icons/hicolor/<size>/apps/<app-id>.png
@@ -24,6 +25,9 @@ install(DIRECTORY "${NPP_ROOT}/PowerEditor/installer/nativeLang/"
         FILES_MATCHING PATTERN "*.xml")
 install(DIRECTORY "${NPP_ROOT}/PowerEditor/installer/functionList/"
         DESTINATION ${NPP_DATA_SUBDIR}/functionList
+        FILES_MATCHING PATTERN "*.xml")
+install(DIRECTORY "${NPP_ROOT}/PowerEditor/installer/APIs/"
+        DESTINATION ${NPP_DATA_SUBDIR}/autoCompletion
         FILES_MATCHING PATTERN "*.xml")
 install(DIRECTORY "${NPP_ROOT}/PowerEditor/bin/userDefineLangs/"
         DESTINATION ${NPP_DATA_SUBDIR}/userDefineLangs

@@ -35,7 +35,8 @@ Description: Notepad++ source code editor - native GTK 3 port (preview)
  shortcuts.xml, stylers.xml, themes and userDefineLang.xml work unchanged.
  .
  Plugins use Notepad++'s plugin interface, rebuilt for Linux with the SDK in
- notepad-plus-plus-gtk-dev. Auto-completion is not yet ported.
+ notepad-plus-plus-gtk-dev. Auto-completion, smart highlighting and the other
+ Preferences work as in Notepad++.
 
 Package: notepad-plus-plus-gtk-dev
 Architecture: any

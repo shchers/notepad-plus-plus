@@ -15,6 +15,7 @@ add_library(nppgtk_core STATIC
   platform/TextCodec.cpp
   platform/Zip.cpp
   core/EditOps.cpp
+  core/EditorFeatures.cpp
   core/FileManager.cpp
   core/FileSearch.cpp
   core/FunctionParser.cpp
@@ -50,6 +51,7 @@ add_library(nppgtk_core STATIC
   ui/MainWindowMacros.cpp
   ui/MainWindowPanels.cpp
   ui/MainWindowPlugins.cpp
+  ui/MainWindowPrefs.cpp
   ui/MainWindowPrint.cpp
   ui/PluginManager.cpp
   ui/ProjectPanel.cpp
@@ -95,6 +97,7 @@ add_custom_target(nppgtk_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/nativeLang" "${NPP_BUILD_DATA_DIR}/nativeLang"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/bin/userDefineLangs" "${NPP_BUILD_DATA_DIR}/userDefineLangs"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/functionList" "${NPP_BUILD_DATA_DIR}/functionList"
-  COMMENT "Staging Notepad++ language, style, localization, UDL and function list definitions"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/APIs" "${NPP_BUILD_DATA_DIR}/autoCompletion"
+  COMMENT "Staging Notepad++ language, style, localization, UDL, function list and auto-completion definitions"
   VERBATIM)
 add_dependencies(${NPP_EXE_NAME} nppgtk_data)

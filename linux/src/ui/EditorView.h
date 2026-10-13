@@ -7,6 +7,7 @@
 // only (WPARAM/LPARAM -> uptr_t/sptr_t), not rewrites.
 #pragma once
 
+#include "core/EditorFeatures.h"
 #include "core/LanguageCatalog.h"
 #include "core/Sci.h"
 #include "core/StyleCatalog.h"
@@ -17,6 +18,7 @@
 #include <Scintilla.h>
 #include <ScintillaWidget.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -33,6 +35,31 @@ struct ViewPosition {
     sptr_t endPos = 0;           // caret
     sptr_t selMode = 0;          // SC_SEL_*
     sptr_t scrollWidth = 1;
+};
+
+// What the editing aids do (Preferences); one instance shared by the views.
+struct EditorOptions {
+    int autoIndentMode = 2;            // 0 none, 1 basic, 2 advanced
+    bool braceMatch = true;
+    bool smartHighlight = true;
+    bool smartWholeWord = true;
+    bool smartMatchCase = false;
+    bool smartOtherView = true;
+    bool tagMatch = true;
+    bool tagAttributes = true;
+    bool tagZones = true;
+    bool links = true;
+    std::string linkSchemes;
+    char delimOpen = '(', delimClose = ')';
+    bool delimMultiLine = false;
+    bool preventC0 = true;
+    bool keepSelOnRightClick = true;
+    bool lineNumberDynamic = true;
+    core::MatchedPairs pairs;
+    core::AutoCompleteOptions autoComplete;
+    bool acInsertTab = true, acInsertEnter = true;
+    // Large files (Preferences > Performance), when restricted.
+    bool largeBraceMatch = false, largeAutoComplete = false, largeSmartHighlight = false, largeLinks = false;
 };
 
 class EditorView {
@@ -83,7 +110,7 @@ public:
     int detectEolMode(int fallback = SC_EOL_LF) const;
 
     // Bookmarks (upstream Search > Bookmark): marker in the symbol margin.
-    static constexpr int kBookmarkMarker = 24; // below SC_MASK_FOLDERS (25..31)
+    static constexpr int kBookmarkMarker = 20; // upstream MARK_BOOKMARK, below the change history markers (21..24)
     void toggleBookmark(sptr_t line);
     void toggleBookmarkAtCaret() { toggleBookmark(lineFromPos(currentPos())); }
     bool gotoNextBookmark(bool forward); // wraps around; false if none
@@ -98,8 +125,34 @@ public:
     std::vector<sptr_t> contractedFoldLines() const;
     void contractFolds(const std::vector<sptr_t>& headerLines);
 
-    // Upstream Preferences > Auto-Indent ("basic" mode), on by default.
+    // Upstream Preferences > Auto-Indent ("basic" mode), on by default
+    // (used when no EditorOptions are set).
     bool autoIndent = true;
+    // Editing aids; null = only brace matching and basic auto-indent.
+    void setOptions(const EditorOptions* o) { opts_ = o; }
+    // The language's auto-completion file (null = none).
+    void setApi(const core::ApiFile* api) { api_ = api; }
+    // Opened under the large file restriction (Preferences > Performance).
+    bool largeFile = false;
+    core::AutoCompleter& completer() { return completer_; }
+    // Re-runs smart highlighting, tag matching and link marking.
+    void refreshDecorations();
+    // Upstream Change History (Preferences > Margins/Border/Edge); applies to
+    // a document from its next load, as Scintilla needs an empty undo history.
+    void setChangeHistory(bool margin, bool text);
+    // View > Show Symbol's invisible characters and EOL appearance (Preferences > Editing 2).
+    struct Representations {
+        bool showNpc = false, showCcUniEol = false;
+        bool npcCodepoint = false, npcCustomColor = false, includeCcUniEol = false;
+        bool eolPlain = false, eolCustomColor = false;
+        std::uint32_t npcColor = 0x6AB5FF, eolColor = 0xDADADA; // BGR
+    };
+    void applyRepresentations(const Representations& r);
+    void refreshLineNumberWidth();
+    // Clickable links: underline or not, a box under the mouse or a dotted line.
+    void setLinkStyle(bool noUnderline, bool fullBox);
+    std::function<EditorView*()> otherView;           // for smart highlighting
+    std::function<void(const std::string& url)> onLinkClicked;
 
     // Callbacks wired by the owning window.
     std::function<void()> onUpdateUI;                 // caret/selection/content moved
@@ -131,6 +184,10 @@ private:
     void updateLineNumberWidth();
     void highlightBraces();
     void maintainIndentation(int ch);
+    void onCharAdded(int ch);
+    core::IndentStyle indentStyle() const;
+    int markup() const;                 // 1 HTML, 2 XML, 0 other
+    bool tagLanguage() const;
 
     GtkWidget* widget_ = nullptr;
     SciFnDirect directFn_ = nullptr;
@@ -140,6 +197,14 @@ private:
     bool centreOnMap_ = false;
     sptr_t pendingFirstLine_ = -1;  // restorePosition() before the widget had a size
     sptr_t pendingXOffset_ = 0;
+    const EditorOptions* opts_ = nullptr;
+    const core::ApiFile* api_ = nullptr;
+    core::AutoInserter inserter_;
+    core::AutoCompleter completer_;
+    int changeHistory_ = 0;             // SC_CHANGE_HISTORY_* flags
+    int savedSelections_ = 0;           // right-click: selection kept
+    std::vector<std::pair<sptr_t, sptr_t>> keptSelection_;
+    guint keepSelIdle_ = 0;
 };
 
 // Maps Windows-only font names in Notepad++ themes to a font that exists on

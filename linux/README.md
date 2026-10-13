@@ -63,8 +63,9 @@ Plugins use Notepad++'s plugin interface: their source builds against the
 SDK in `sdk/` (upstream's plugin headers on a small `windows.h`) into a
 `.so`, with a GTK user interface — see [docs/PLUGINS.md](docs/PLUGINS.md)
 and the sample in `sdk/examples/HelloGtk`; Plugins ▸ Plugins Admin installs,
-removes and deactivates them. Auto-completion is not ported
-yet. The full table is in
+removes and deactivates them. Preferences has every page that applies on
+Linux, including auto-completion with upstream's API files, smart
+highlighting, matching tags and clickable links. The full table is in
 [docs/PORTING.md §4](docs/PORTING.md#4-what-works-today).
 
 ## Layout

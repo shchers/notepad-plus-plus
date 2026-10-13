@@ -47,6 +47,7 @@ public:
     // One search: begin(), addFile() for each file with hits, finish().
     void begin(const std::string& what);
     void addFile(const std::string& file, const std::vector<core::Hit>& hits);
+    bool oneEntryPerLine = true; // Preferences > Searching
     // `searched` = number of files (or selections) searched.
     void finish(int searched, bool wholeNotSelection, const core::FindOptions& o);
     void clear();

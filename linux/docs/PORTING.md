@@ -424,7 +424,7 @@ on its own.
 | Editing | ✅ folding (5 margin styles, fold all / current / by level), brace match, auto-indent, comments (line toggle/add/remove, block), duplicate/move lines, Line Operations (sort 14 ways incl. locale and column sort, remove duplicates, empty lines, join, split, insert blank line), Convert Case (8 modes), Blank Operations (trim, EOL to space, TAB ↔ space), multi-select all/next/undo/skip, Begin/End Select, Column Editor, multi-caret and column selection, bookmarks and bookmarked-line operations, insert date/time, open/search selected text, MD5/SHA hashes of the selection, read-only for all documents, go to line (Ctrl+G), zoom |
 | Macros and Run | ✅ record, play back, save (with a shortcut), run multiple times or to the end of the file, saved macros menu; Run dialog with upstream variables, saved Run commands with shortcuts — all in `shortcuts.xml`, compatible with Windows |
 | View | ✅ word wrap, show spaces / EOL / all characters, indent guides, wrap symbol, always on top, full screen, Post-it, tab commands (1st–9th, next/previous, move), Summary, status bar (language, length/lines, Ln/Col/Sel, EOL, encoding, INS/OVR) |
-| Settings | ✅ Preferences (General: localization, toolbar, status bar; Editing; Margins/Border/Edge; New Document; Indentation; Recent Files History; Backup; MISC. auto-detection), Style Configurator (live preview, themes, user keywords and extensions), theme menu, import of themes and `config.xml`; persisted in `settings.ini` |
+| Settings | ✅ Preferences: every upstream page that applies on Linux, with upstream's labels and defaults (General, Toolbar icon sets, Tab Bar, Editing 1 and 2, Dark Mode following the desktop, Margins/Border/Edge with change history and multiple edges, New Document, Default Directory, Language menu, per-language Indentation, Highlighting, Print header/footer, Searching, Recent Files History, Backup, Auto-Completion, Multi-Instance & Date, Delimiter, Performance, clickable links, Search Engine, MISC.) — not File Association, Cloud, system tray, rendering mode or the auto-updater; Style Configurator (live preview, themes, user keywords and extensions), theme menu, import of themes and `config.xml`; persisted in `settings.ini` |
 | Localization | ✅ all upstream `nativeLang` translations, switched live; right-to-left languages |
 | User Defined Languages | ✅ upstream UDL files (bundled Markdown, the user's `userDefineLang.xml` / `userDefineLangs/`), Language menu, detection by extension, sessions |
 | Printing | ✅ Print (GTK dialog, settings kept), Print Now; selection only when there is one; header and page footer |
@@ -432,7 +432,7 @@ on its own.
 | Dragging tabs between views, tab pinning/colours, renaming untitled tabs | ❌ later (session attributes are already kept) |
 | UDL editor ("Define your language…"), Find Characters in Range, Hide Lines, synchronized scrolling, Monitoring (tail -f), text direction | ❌ later (see Phase 3 "left for later") |
 | Encoding ▸ ANSI | ➖ left out: "ANSI" is the system code page, UTF-8 on Linux, where upstream does nothing for it; Character Set covers legacy encodings |
-| Auto-completion, call tips, smart highlighting, tag matching | ❌ Phase 1 (code is portable) |
+| Auto-completion, call tips, smart highlighting, tag matching | ✅ `core/EditorFeatures`, after upstream's `AutoCompletion`, `FunctionCallTip`, `SmartHighlighter`, `xmlMatchedTagsHighlighter` with its `autoCompletion/*.xml`; also auto-insert of pairs and close tags, advanced auto-indent, clickable links, Ctrl+double-click delimiter selection (Phase 1 would replace them with upstream's own code) |
 | Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom |
 | Plugins | ✅ upstream's plugin interface, rebuilt from source against the SDK in `linux/sdk` (§7, `docs/PLUGINS.md`): entry points, `NPPM_*` messages with upstream's return values, `NPPN_*` and forwarded `SCN_*` notifications, Plugins menu with check marks, default and `shortcuts.xml` keys, toolbar buttons, docked panels (GTK widgets) restored at start, `NPPM_MSGTOPLUGIN`, `SendMessage` from worker threads, `-noPlugin`, `-pluginMessage=`; Plugins Admin (installed and deactivated plugins, install from `.so`/`.zip`, remove, deactivate) and Import plugin(s); sample plugin, pkg-config file, `-dev` package |
 
@@ -460,8 +460,7 @@ on its own.
 | `WinControls/ColourPicker/WordStyleDlg.*` | `ui/MainWindowDialogs.cpp` (Style Configurator) + `core/StyleCatalog::save` | |
 | `WinControls/StaticDialog/RunDlg/*` | `ui/MainWindowMacros.cpp` | |
 | `localization.*` (`NativeLangSpeaker`) | `core/Translator` | |
-| `ScintillaComponent/AutoCompletion.*`, `FunctionCallTip.*` | Phase 1: compile into `core/` | reads `autoCompletion/*.xml` |
-| `ScintillaComponent/SmartHighlighter.*`, `xmlMatchedTagsHighlighter.*` | Phase 1: compile into `core/` | `execute()` only |
+| `ScintillaComponent/AutoCompletion.*`, `FunctionCallTip.*`, `SmartHighlighter.*`, `xmlMatchedTagsHighlighter.*`; `Notepad_plus::maintainIndentation`, `addHotSpot` / `isUrl` | `core/EditorFeatures`, driven by `ui/EditorView` | port versions on `core::Sci` with upstream's logic and `autoCompletion/*.xml`; Phase 1 would compile upstream's own |
 | `Parameters.*` | `core/*Catalog`, `core/Session` (`session.xml`), `core/NppConfig` (`config.xml` import), `core/Shortcuts` (`shortcuts.xml`), `platform/Settings` | default keys and macro-recordable commands generated from `Parameters.cpp` / `NppCommands.cpp` |
 | `Utf8_16.*`, `EncodingMapper.*` | `platform/TextCodec` | |
 | `MISC/Common/*` | `platform/` | paths, string conversion, file helpers |
@@ -478,7 +477,7 @@ on its own.
 | `WinControls/AnsiCharPanel` | `ui/CharPanel` | |
 | `WinControls/ClipboardHistory` | `ui/ClipboardHistoryPanel` | |
 | `WinControls/ProjectPanel` | `ui/ProjectPanel` + `core/Workspace` | |
-| `WinControls/Preference` | `ui/MainWindowDialogs.cpp` (`cmdPreferences`) | the pages for settings the port has |
+| `WinControls/Preference` | `ui/MainWindowPrefs.cpp` (dialog and `applySettings`), `platform/Settings` | the pages that apply on Linux |
 | `WinControls/PluginsAdmin` | `core/PluginFolders` (folders, install, deactivate), `platform/Zip`, `ui/MainWindowPlugins.cpp` (`cmdPluginsAdmin`) | local plugins only; no download list |
 | `MISC/PluginsManager` (`PluginsManager`, `PluginInterface.h`, `Notepad_plus_msgs.h`) | `ui/PluginManager` (loading, command IDs, notifications, handles, `SendMessageW`), `ui/MainWindowPlugins.cpp` (`NPPM_*` as in `NppBigSwitch.cpp`, menu, toolbar, panels), `linux/sdk` | upstream headers used unchanged; §7 |
 | `NppDarkMode`, `DarkMode/` | not ported | GTK theme + `gtk-application-prefer-dark-theme` |
@@ -529,10 +528,7 @@ Preferences, Style Configurator, Column Editor, User Defined Languages
 "Key mechanisms". The dialogs are built in C++ instead of GtkBuilder (§3,
 "Dialogs"). Left for later: the UDL editor dialog (and UDL import/export),
 the Shortcut Mapper's Scintilla-commands tab (the keys are kept in
-`shortcuts.xml`), Preferences pages for settings the port does not have yet
-(Tab Bar, Dark Mode, Searching, Highlighting, Print header/footer layout,
-Delimiter, Performance, Default Directory, Multi-Instance & Date, Search
-Engine), Find dialog transparency and Find in Projects, Find Characters in
+`shortcuts.xml`), Find dialog transparency and Find in Projects, Find Characters in
 Range, Hide Lines, synchronized scrolling, Monitoring, text direction,
 `shortcuts.xml` integrity check for Run commands (upstream keeps an HMAC in
 `config.xml`), and the MD5/SHA "from files" dialogs.
@@ -747,6 +743,20 @@ one-line upstream PR:
   refusing archives that are not one plugin, deactivate/activate/remove,
   the version and status column (loaded, load error, hidden by a plugin of
   the same name, deactivated), and asking before replacing.
+- `preferences`: URL detection (upstream's rules, schemes, Unicode),
+  smart highlighting (whole word, case), matching tags and attributes,
+  comment zones, links, delimiter selection, advanced auto-indent (braces,
+  conditions, Python colons), auto-insert (pairs, stepping over, user
+  pairs, close tags, void elements), auto-completion lists and call tips
+  from upstream's `cpp.xml`, word completion; `settings.ini` round trip and
+  migration of older keys, translated combo-box items, custom date
+  pictures; on a live window: current line frame, multiple edges, padding,
+  change history margin, dynamic line number width, word characters,
+  non-printing characters (abbreviation, codepoint), tab bar (vertical,
+  locked, hidden), copy/cut a line without selection, fold toggling,
+  first-line tab names, large file restriction, Ctrl+Tab in MRU order,
+  Save All confirmation, folders opened as files or in Folder as Workspace,
+  session files by extension, dark mode at start, and the dialog itself.
 - `app_launch`: starts the real application (`-multiInst`) with a file and
   `-n3`, the test plugin and the SDK example loaded, then exits after 1.5 s
   through the normal exit path. It uses a fresh configuration directory.

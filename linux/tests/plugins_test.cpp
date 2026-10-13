@@ -526,6 +526,7 @@ int main(int argc, char** argv)
         std::printf("plugins admin...\n");
         testPluginFolders();
         testAdminStatus(*w);
+        w->settings().noSessionPlugins = true; // -nosession window: plugin panels come back only when ticked
         w->sendPluginCommandLine("TestPlugin=1");
         CHECK(get("cmdline") == "TestPlugin=1");
         CHECK(w->requestQuit());

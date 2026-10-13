@@ -64,6 +64,10 @@ bool Translator::merge(const fs::path& file, std::string* error)
                 if (std::string_view(c.name()) == "Item") {
                     if (c.attribute("id"))
                         t.strings_[key("dlg:" + path, c.attribute("id").as_string())] = c.attribute("name").as_string();
+                } else if (std::string_view(c.name()) == "ComboBox" && c.attribute("id")) {
+                    int i = 0;
+                    for (const pugi::xml_node e : c.children("Element"))
+                        t.strings_[key("dlgcombo:" + path + "/" + c.attribute("id").as_string(), std::to_string(i++))] = e.attribute("name").as_string();
                 } else {
                     walk(c, path + "/" + c.name());
                 }
@@ -156,6 +160,19 @@ std::string Translator::command(int id, std::string_view fallback) const
 std::string Translator::dialog(std::string_view path, int id, std::string_view fallback) const
 {
     return lookup(key("dlg:" + std::string(path), std::to_string(id)), fallback);
+}
+
+std::vector<std::string> Translator::dialogComboItems(std::string_view path, int id) const
+{
+    std::vector<std::string> out;
+    const std::string base = "dlgcombo:" + std::string(path) + "/" + std::to_string(id);
+    for (int i = 0;; ++i) {
+        auto it = strings_.find(key(base, std::to_string(i)));
+        if (it == strings_.end())
+            break;
+        out.push_back(it->second);
+    }
+    return out;
 }
 
 std::string Translator::dialogAttr(std::string_view path, std::string_view attr, std::string_view fallback) const

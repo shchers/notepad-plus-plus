@@ -26,6 +26,8 @@ struct Buffer {
     const Language* language = nullptr;
     const UserLanguage* userLanguage = nullptr; // set for a User Defined Language (language is then plain text)
     bool userReadOnly = false;     // Edit > Read-Only and -ro
+    bool untitledRenamed = false;  // the user named this untitled tab (first-line naming stops)
+    bool largeFile = false;        // opened under Preferences > Performance's restriction
 
     // Dirty without an undoable edit: encoding conversion, or text restored
     // from a snapshot. Cleared on save and reload.

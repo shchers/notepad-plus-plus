@@ -49,6 +49,8 @@ public:
     std::string command(int id, std::string_view fallback) const;
     std::string dialog(std::string_view path, int id, std::string_view fallback) const;
     std::string dialogAttr(std::string_view path, std::string_view attr, std::string_view fallback) const;
+    // <ComboBox id="..."><Element name=.../> entries of a dialog, in order.
+    std::vector<std::string> dialogComboItems(std::string_view path, int id) const;
     std::string misc(std::string_view key, std::string_view fallback) const;
     std::string message(std::string_view box, std::string_view attr, std::string_view fallback) const;
 

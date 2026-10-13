@@ -873,18 +873,18 @@ sptr_t MainWindow::pluginMessage(unsigned msg, uptr_t wParam, sptr_t lParam)
         return TRUE;
     }
     case NPPM_GETTOOLBARICONSETCHOICE:
-        return 4; // "Standard icons: small": the icon theme's small icons
+        return settings_.toolbarIconSet;
 
     // ---- Window parts ---------------------------------------------------------------
     case NPPM_HIDETABBAR: {
         const bool old = tabBarHidden_;
         tabBarHidden_ = lParam != 0;
         for (GtkWidget* nb : notebooks_)
-            gtk_notebook_set_show_tabs(GTK_NOTEBOOK(nb), !tabBarHidden_);
+            gtk_notebook_set_show_tabs(GTK_NOTEBOOK(nb), !tabBarHidden_ && !settings_.tabHide);
         return old;
     }
     case NPPM_ISTABBARHIDDEN:
-        return tabBarHidden_;
+        return tabBarHidden_ || settings_.tabHide;
     case NPPM_HIDETOOLBAR:
     case NPPM_HIDEMENU:
     case NPPM_HIDESTATUSBAR: {
@@ -895,6 +895,8 @@ sptr_t MainWindow::pluginMessage(unsigned msg, uptr_t wParam, sptr_t lParam)
             settings_.hideToolbar = lParam == TRUE;
         else if (msg == NPPM_HIDESTATUSBAR)
             settings_.hideStatusBar = lParam == TRUE;
+        else
+            settings_.hideMenu = lParam == TRUE;
         return wasHidden;
     }
     case NPPM_ISTOOLBARHIDDEN:
@@ -965,18 +967,19 @@ sptr_t MainWindow::pluginMessage(unsigned msg, uptr_t wParam, sptr_t lParam)
     case NPPM_GETBOOKMARKID:
         return EditorView::kBookmarkMarker;
     case NPPM_SETSMOOTHFONT:
-        for (auto& t : tabs_)
-            t->view->execute(SCI_SETFONTQUALITY, lParam ? SC_EFF_QUALITY_LCD_OPTIMIZED : SC_EFF_QUALITY_DEFAULT);
+        settings_.smoothFont = lParam != 0;
+        applySettings();
         return TRUE;
     case NPPM_SETLINENUMBERWIDTHMODE:
         if (lParam != LINENUMWIDTH_DYNAMIC && lParam != LINENUMWIDTH_CONSTANT)
             return FALSE;
-        lineNumberWidthMode_ = static_cast<int>(lParam);
+        settings_.lineNumberDynamic = lParam == LINENUMWIDTH_DYNAMIC;
+        applySettings();
         return TRUE;
     case NPPM_GETLINENUMBERWIDTHMODE:
-        return lineNumberWidthMode_;
+        return settings_.lineNumberDynamic ? LINENUMWIDTH_DYNAMIC : LINENUMWIDTH_CONSTANT;
     case NPPM_ISAUTOINDENTON:
-        return settings_.autoIndent;
+        return settings_.autoIndentMode != 0;
     case NPPM_GETEXTERNALLEXERAUTOINDENTMODE:
     case NPPM_SETEXTERNALLEXERAUTOINDENTMODE:
         return FALSE; // no external lexers

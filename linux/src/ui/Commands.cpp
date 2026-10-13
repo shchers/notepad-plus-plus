@@ -203,7 +203,8 @@ std::vector<Top> mainMenu()
             C(IDM_EDIT_SELECTALL, "&Select All"), C(IDM_EDIT_BEGINENDSELECT, "Begin/End &Select"),
             C(IDM_EDIT_BEGINENDSELECT_COLUMNMODE, "Begin/End Select in Column Mode"), SEP,
             S("edit-insert", "Insert", {C(IDM_EDIT_INSERT_DATETIME_SHORT, "Date Time (short)"),
-                                        C(IDM_EDIT_INSERT_DATETIME_LONG, "Date Time (long)")}),
+                                        C(IDM_EDIT_INSERT_DATETIME_LONG, "Date Time (long)"),
+                                        C(IDM_EDIT_INSERT_DATETIME_CUSTOMIZED, "Date Time (customized)")}),
             S("edit-copyToClipboard", "Cop&y to Clipboard", {
                 C(IDM_EDIT_FULLPATHTOCLIP, "Copy Current Full File path"), C(IDM_EDIT_FILENAMETOCLIP, "Copy Current Filename"),
                 C(IDM_EDIT_CURRENTDIRTOCLIP, "Copy Current Dir. Path"), SEP,
@@ -242,6 +243,10 @@ std::vector<Top> mainMenu()
                 C(IDM_EDIT_BLOCK_COMMENT, "Toggle Single Line Comment"), C(IDM_EDIT_BLOCK_COMMENT_SET, "Single Line Comment"),
                 C(IDM_EDIT_BLOCK_UNCOMMENT, "Single Line Uncomment"), C(IDM_EDIT_STREAM_COMMENT, "Block Comment"),
                 C(IDM_EDIT_STREAM_UNCOMMENT, "Block Uncomment")}),
+            S("edit-autoCompletion", "&Auto-Completion", {
+                C(IDM_EDIT_AUTOCOMPLETE, "Function Completion"), C(IDM_EDIT_AUTOCOMPLETE_CURRENTFILE, "Word Completion"),
+                C(IDM_EDIT_FUNCCALLTIP, "Function Parameters Hint"), C(IDM_EDIT_FUNCCALLTIP_PREVIOUS, "Function Parameters Previous Hint"),
+                C(IDM_EDIT_FUNCCALLTIP_NEXT, "Function Parameters Next Hint")}),
             S("edit-eolConversion", "&EOL Conversion", {
                 C(IDM_FORMAT_TODOS, "Windows (CR LF)"), C(IDM_FORMAT_TOUNIX, "Unix (LF)"), C(IDM_FORMAT_TOMAC, "Macintosh (CR)")}),
             S("edit-blankOperations", "&Blank Operations", {
@@ -319,6 +324,7 @@ std::vector<Top> mainMenu()
             C(IDM_VIEW_POSTIT, "&Post-It"), SEP,
             S("view-showSymbol", "Show S&ymbol", {
                 C(IDM_VIEW_TAB_SPACE, "Show Space and Tab"), C(IDM_VIEW_EOL, "Show End of Line"),
+                C(IDM_VIEW_NPC, "Show Non-Printing Characters"), C(IDM_VIEW_NPC_CCUNIEOL, "Show Control Characters && Unicode EOL"),
                 C(IDM_VIEW_ALL_CHARACTERS, "Show All Characters"), SEP,
                 C(IDM_VIEW_INDENT_GUIDE, "Show Indent Guide"), C(IDM_VIEW_WRAP_SYMBOL, "Show Wrap Symbol")}),
             S("view-zoom", "&Zoom", {C(IDM_VIEW_ZOOMIN, "Zoom &In"), C(IDM_VIEW_ZOOMOUT, "Zoom &Out"),

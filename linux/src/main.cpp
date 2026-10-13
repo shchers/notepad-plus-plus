@@ -12,6 +12,7 @@
 
 #include "core/LanguageCatalog.h"
 #include "platform/Paths.h"
+#include "platform/Settings.h"
 #include "ui/MainWindow.h"
 
 #include <gtk/gtk.h>
@@ -36,6 +37,7 @@ struct CommandLine {
     bool multiInst = false;
     bool noSession = false;
     bool noPlugin = false;
+    std::filesystem::path sessionFile; // opened in a new instance (Preferences > Multi-Instance)
     std::string pluginMessage; // -pluginMessage="..."
     std::string text;          // the whole command line (NPPM_GETCURRENTCMDLINE)
 };
@@ -142,6 +144,17 @@ int onCommandLine(GApplication* gapp, GApplicationCommandLine* cmd, App& app)
 
     const bool first = !app.window;
     if (first) {
+        npp::platform::Settings prefs;
+        prefs.load();
+        std::string ext = prefs.sessionExt;
+        if (!ext.empty() && ext[0] == '.')
+            ext.erase(0, 1);
+        if (prefs.multiInstMode == 1 && !ext.empty())
+            for (const fs::path& f : cl.files)
+                if (g_ascii_strcasecmp(f.extension().c_str(), ("." + ext).c_str()) == 0)
+                    cl.sessionFile = f;
+    }
+    if (first) {
         app.window = std::make_unique<npp::ui::MainWindow>(GTK_APPLICATION(gapp), app.langs, app.useSession);
         app.window->setCommandLine(cl.text);
         // Upstream order: plugins before the session, NPPN_READY once all is open.
@@ -149,8 +162,11 @@ int onCommandLine(GApplication* gapp, GApplicationCommandLine* cmd, App& app)
             app.window->loadPlugins();
         app.window->sendPluginCommandLine(cl.pluginMessage);
         app.window->restoreLastSession();
-        if (app.window->documentCount() == 0)
+        // Preferences > New Document: "Always open a new document in addition at startup".
+        if (app.window->documentCount() == 0 || app.window->settings().newDocAtStartup)
             app.window->newDocument();
+        if (!cl.sessionFile.empty()) // Preferences > Multi-Instance: the session is saved back on exit
+            app.window->setExitSessionFile(cl.sessionFile);
         // Close like the user would, so the exit protocol (session, snapshots) runs.
         if (cl.exitAfterMs >= 0 && !g_application_command_line_get_is_remote(cmd))
             g_timeout_add(static_cast<guint>(cl.exitAfterMs), +[](gpointer p) -> gboolean {
@@ -214,6 +230,22 @@ int main(int argc, char** argv)
         return 1;
     }
     app.useSession = !local.noSession;
+    // Preferences > Multi-Instance & Date (read before the instance is chosen).
+    {
+        npp::platform::Settings prefs;
+        prefs.load();
+        if (prefs.multiInstMode == 2)
+            local.multiInst = true;
+        std::string ext = prefs.sessionExt;
+        if (!ext.empty() && ext[0] == '.')
+            ext.erase(0, 1);
+        if (prefs.multiInstMode == 1 && !ext.empty())
+            for (const fs::path& f : local.files)
+                if (g_ascii_strcasecmp(f.extension().c_str(), ("." + ext).c_str()) == 0) {
+                    local.multiInst = true;
+                    break;
+                }
+    }
 
     g_set_prgname(NPP_EXE_NAME);
     g_set_application_name("Notepad++");

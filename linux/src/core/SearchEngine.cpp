@@ -145,7 +145,7 @@ FindStatus SearchEngine::findNext(const FindOptions& o) const
     return FindStatus::Wrapped;
 }
 
-FindStatus SearchEngine::replace(const FindOptions& o, bool* replaced) const
+FindStatus SearchEngine::replace(const FindOptions& o, bool* replaced, bool moveToNext) const
 {
     if (replaced)
         *replaced = false;
@@ -163,6 +163,12 @@ FindStatus SearchEngine::replace(const FindOptions& o, bool* replaced) const
         const unsigned msg = o.mode == SearchMode::Regex ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
         sci_(msg, with.size(), reinterpret_cast<sptr_t>(with.data()));
         const sptr_t start = sci_(SCI_GETTARGETSTART), end = sci_(SCI_GETTARGETEND);
+        if (replaced)
+            *replaced = true;
+        if (!moveToNext) { // Preferences > Searching: stay on the replacement
+            sci_(SCI_SETSEL, static_cast<uptr_t>(start), end);
+            return FindStatus::Found;
+        }
         // Continue after (or, going up, before) the replacement.
         const sptr_t caret = o.forward ? end : start;
         sci_(SCI_SETSEL, static_cast<uptr_t>(caret), caret);

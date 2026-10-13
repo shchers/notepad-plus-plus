@@ -77,7 +77,9 @@ public:
     FindStatus findNext(const FindOptions& o) const;
     // Upstream processReplace: replaces the selection when it is a match, then
     // finds the next one. `*replaced` tells whether the selection was replaced.
-    FindStatus replace(const FindOptions& o, bool* replaced = nullptr) const;
+    // `moveToNext` false: the replacement stays selected (Preferences >
+    // Searching "Don't move to the following occurrence").
+    FindStatus replace(const FindOptions& o, bool* replaced = nullptr, bool moveToNext = true) const;
 
     // Upstream processAll scopes: whole document, or the selection when
     // `inSelection` is set (and wrap/direction otherwise). One undo step.

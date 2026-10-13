@@ -293,6 +293,10 @@ void MainWindow::registerFileCommands()
     cmds_.add(IDM_FILE_SAVEAS, [this, buf] { if (core::Buffer* b = buf()) save(*b, true); });
     cmds_.add(IDM_FILE_SAVECOPYAS, [this, buf] { if (core::Buffer* b = buf()) saveCopyAs(*b); });
     cmds_.add(IDM_FILE_SAVEALL, [this] {
+        // Preferences > MISC.: "Enable Save All confirm dialog".
+        if (settings_.saveAllConfirm && ask(trMessage("SaveAllConfirm", "message", "Are you sure you want to save all modified documents?"),
+                                            "", false) != Answer::Yes)
+            return;
         for (core::Buffer* b : buffers())
             if (isModified(*b) && !save(*b, false))
                 break;
@@ -373,21 +377,64 @@ void MainWindow::registerEditCommands()
     auto buf = [this] { return activeBuffer(); };
     cmds_.add(IDM_EDIT_UNDO, [this] { sciCommand(SCI_UNDO); });
     cmds_.add(IDM_EDIT_REDO, [this] { sciCommand(SCI_REDO); });
-    cmds_.add(IDM_EDIT_CUT, [this] { sciCommand(SCI_CUT); });
-    cmds_.add(IDM_EDIT_COPY, [this] { sciCommand(SCI_COPY); });
+    // Preferences > Editing 1: "Copy/Cut Line without selection", as upstream.
+    cmds_.add(IDM_EDIT_CUT, [this] {
+        EditorView* v = activeView();
+        if (v && v->execute(SCI_GETSELECTIONEMPTY) && settings_.copyLineNoSelection) {
+            if (!v->execute(SCI_GETREADONLY)) {
+                v->execute(SCI_COPYALLOWLINE);
+                v->execute(SCI_LINEDELETE);
+            }
+        } else if (!v || !v->execute(SCI_GETSELECTIONEMPTY)) {
+            sciCommand(SCI_CUT);
+        }
+    });
+    cmds_.add(IDM_EDIT_COPY, [this] {
+        EditorView* v = activeView();
+        if (v && v->execute(SCI_GETSELECTIONEMPTY) && settings_.copyLineNoSelection)
+            v->execute(SCI_COPYALLOWLINE);
+        else
+            sciCommand(SCI_COPY);
+    });
     cmds_.add(IDM_EDIT_PASTE, [this] { sciCommand(SCI_PASTE); });
     cmds_.add(IDM_EDIT_DELETE, [this] { sciCommand(SCI_CLEAR); });
     cmds_.add(IDM_EDIT_SELECTALL, [this] { sciCommand(SCI_SELECTALL); });
     cmds_.add(IDM_EDIT_BEGINENDSELECT, [this] { cmdBeginEndSelect(false); }, [this] { return beginSelectPos_ >= 0; });
     cmds_.add(IDM_EDIT_BEGINENDSELECT_COLUMNMODE, [this] { cmdBeginEndSelect(true); }, [this] { return beginSelectPos_ >= 0; });
-    cmds_.add(IDM_EDIT_INSERT_DATETIME_SHORT, [this] {
-        const std::string s = formatNow("%H:%M %x");
+    // Upstream: time then date, or date then time with "Reverse default date time order".
+    auto insertDateTime = [this](const char* date) {
+        const std::string time = formatNow("%H:%M"), d = formatNow(date);
+        const std::string s = settings_.dateReverse ? d + " " + time : time + " " + d;
+        editOp([&](const core::Sci& sci) { sci(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(s.c_str())); });
+    };
+    cmds_.add(IDM_EDIT_INSERT_DATETIME_SHORT, [insertDateTime] { insertDateTime("%x"); });
+    cmds_.add(IDM_EDIT_INSERT_DATETIME_LONG, [insertDateTime] { insertDateTime("%A, %B %e, %Y"); });
+    cmds_.add(IDM_EDIT_INSERT_DATETIME_CUSTOMIZED, [this] {
+        const std::string s = formatCustomDate(settings_.dateFormat);
         editOp([&](const core::Sci& sci) { sci(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(s.c_str())); });
     });
-    cmds_.add(IDM_EDIT_INSERT_DATETIME_LONG, [this] {
-        const std::string s = formatNow("%H:%M %A, %B %e, %Y");
-        editOp([&](const core::Sci& sci) { sci(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(s.c_str())); });
-    });
+    // Edit > Auto-Completion (upstream AutoCompletion / FunctionCallTip).
+    auto completion = [this](int what) {
+        Tab* t = activeTab();
+        if (!t)
+            return;
+        const core::ApiFile* api = apiFor(*t->buf);
+        core::AutoCompleter& c = t->view->completer();
+        const core::Sci sci = t->view->sci();
+        switch (what) {
+        case 0: c.showFunctionList(sci, api); break;
+        case 1: c.showWordList(sci, api, true, settings_.acIgnoreNumbers); break;
+        case 2: c.showCallTip(sci, api); break;
+        case 3: c.callTipClick(sci, 1); break;
+        case 4: c.callTipClick(sci, 2); break;
+        default: break;
+        }
+    };
+    cmds_.add(IDM_EDIT_AUTOCOMPLETE, [completion] { completion(0); });
+    cmds_.add(IDM_EDIT_AUTOCOMPLETE_CURRENTFILE, [completion] { completion(1); });
+    cmds_.add(IDM_EDIT_FUNCCALLTIP, [completion] { completion(2); });
+    cmds_.add(IDM_EDIT_FUNCCALLTIP_PREVIOUS, [completion] { completion(3); });
+    cmds_.add(IDM_EDIT_FUNCCALLTIP_NEXT, [completion] { completion(4); });
 
     cmds_.add(IDM_EDIT_FULLPATHTOCLIP, [buf] { if (core::Buffer* b = buf()) setClipboard(b->fullName()); });
     cmds_.add(IDM_EDIT_FILENAMETOCLIP, [buf] { if (core::Buffer* b = buf()) setClipboard(b->name()); });
@@ -484,9 +531,20 @@ void MainWindow::registerEditCommands()
         std::string q = v->selectedText();
         if (q.empty())
             return;
+        // Preferences > Search Engine; $(CURRENT_WORD) stands for the text.
+        static const char* const kEngines[] = {"https://duckduckgo.com/?q=$(CURRENT_WORD)", "https://www.google.com/search?q=$(CURRENT_WORD)",
+                                               "https://www.bing.com/search?q=$(CURRENT_WORD)", "https://search.yahoo.com/search?q=$(CURRENT_WORD)"};
+        std::string url = settings_.searchEngine < 4 ? kEngines[std::clamp(settings_.searchEngine, 0, 3)] : settings_.searchEngineCustom;
+        if (url.empty())
+            url = kEngines[0];
         gchar* esc = g_uri_escape_string(q.c_str(), nullptr, FALSE);
-        openUri(std::string("https://www.google.com/search?q=") + esc);
+        const std::string token = "$(CURRENT_WORD)";
+        if (const std::size_t at = url.find(token); at != std::string::npos)
+            url.replace(at, token.size(), esc);
+        else
+            url += esc;
         g_free(esc);
+        openUri(url);
     });
 
     cmds_.add(IDM_EDIT_MULTISELECTALL, [this] { cmdMultiSelect(true, false, false); });
@@ -649,11 +707,15 @@ void MainWindow::registerViewCommands()
 
     toggle(IDM_VIEW_TAB_SPACE, &platform::Settings::showSpaces);
     toggle(IDM_VIEW_EOL, &platform::Settings::showEol);
-    cmds_.add(IDM_VIEW_ALL_CHARACTERS, [this, applyAll] {
-        const bool on = !(settings_.showSpaces && settings_.showEol);
-        settings_.showSpaces = settings_.showEol = on;
+    toggle(IDM_VIEW_NPC, &platform::Settings::showNpc);
+    toggle(IDM_VIEW_NPC_CCUNIEOL, &platform::Settings::showCcUniEol);
+    // Upstream: spaces and tabs, EOL, non-printing and control characters.
+    auto allShown = [this] { return settings_.showSpaces && settings_.showEol && settings_.showNpc && settings_.showCcUniEol; };
+    cmds_.add(IDM_VIEW_ALL_CHARACTERS, [this, applyAll, allShown] {
+        const bool on = !allShown();
+        settings_.showSpaces = settings_.showEol = settings_.showNpc = settings_.showCcUniEol = on;
         applyAll();
-    }, [this] { return settings_.showSpaces && settings_.showEol; });
+    }, allShown);
     toggle(IDM_VIEW_INDENT_GUIDE, &platform::Settings::showIndentGuides);
     toggle(IDM_VIEW_WRAP_SYMBOL, &platform::Settings::showWrapSymbol);
     toggle(IDM_VIEW_WRAP, &platform::Settings::wordWrap);
@@ -684,8 +746,28 @@ void MainWindow::registerViewCommands()
         if (n > 1)
             gtk_notebook_set_current_page(nb, (gtk_notebook_get_current_page(nb) + delta + n) % n);
     };
-    cmds_.add(IDM_VIEW_TAB_NEXT, [cycle] { cycle(1); });
-    cmds_.add(IDM_VIEW_TAB_PREV, [cycle] { cycle(-1); });
+    // Ctrl+Tab: with Preferences > MISC. "Document Switcher ... MRU", the most
+    // recently used documents first, else in tab order.
+    auto switcher = [this, cycle](int delta) {
+        if (!settings_.docSwitcher || !settings_.docSwitcherMru || mru_.size() < 2) {
+            cycle(delta);
+            return;
+        }
+        const core::Buffer* cur = activeBuffer();
+        auto it = std::find(mru_.begin(), mru_.end(), cur);
+        const std::size_t n = mru_.size();
+        const std::size_t i = it == mru_.end() ? 0 : static_cast<std::size_t>(it - mru_.begin());
+        const core::Buffer* next = mru_[(i + n + static_cast<std::size_t>(delta > 0 ? 1 : n - 1)) % n];
+        // The order holds while Ctrl is down; releasing it makes the choice the most recent.
+        mruSwitching_ = true;
+        for (const auto& t : tabs_)
+            if (t->buf.get() == next) {
+                activateTab(*t);
+                break;
+            }
+    };
+    cmds_.add(IDM_VIEW_TAB_NEXT, [switcher] { switcher(1); });
+    cmds_.add(IDM_VIEW_TAB_PREV, [switcher] { switcher(-1); });
     cmds_.add(IDM_VIEW_TAB_START, [this] { if (Tab* t = tabAt(activeView_, 0)) activateTab(*t); });
     cmds_.add(IDM_VIEW_TAB_END, [this] {
         if (Tab* t = tabAt(activeView_, gtk_notebook_get_n_pages(GTK_NOTEBOOK(notebooks_[activeView_])) - 1))
@@ -798,10 +880,8 @@ void MainWindow::cmdOpen()
     GtkFileChooserNative* dlg = gtk_file_chooser_native_new(core::Translator::plain(tr_.command(IDM_FILE_OPEN, "Open")).c_str(),
                                                             GTK_WINDOW(window_), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
     gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER(dlg), TRUE);
-    if (core::Buffer* b = activeBuffer(); b && !b->isUntitled())
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), b->path.parent_path().c_str());
-    else if (!lastDir_.empty())
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), lastDir_.c_str());
+    if (const fs::path dir = dialogFolder(); !dir.empty())
+        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), dir.c_str());
     if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         std::vector<fs::path> files;
         GSList* list = gtk_file_chooser_get_filenames(GTK_FILE_CHOOSER(dlg));
@@ -821,7 +901,7 @@ bool MainWindow::saveCopyAs(core::Buffer& b)
     if (tabs.empty())
         return false;
     const fs::path f = chooseFile(GTK_WINDOW(window_), core::Translator::plain(tr_.command(IDM_FILE_SAVECOPYAS, "Save a Copy As")),
-                                  GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", b.isUntitled() ? lastDir_ : b.path.parent_path(), nullptr, nullptr);
+                                  GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", b.isUntitled() ? dialogFolder() : b.path.parent_path(), nullptr, nullptr);
     if (f.empty())
         return false;
     std::string err;
@@ -1117,8 +1197,9 @@ void MainWindow::cmdMarkToken(int style, bool all)
         }
         core::FindOptions o;
         o.what = s.range(a, b);
-        o.matchCase = true;
-        o.wholeWord = s(SCI_GETSELECTIONSTART) == s(SCI_GETSELECTIONEND); // a caret word: whole words only
+        // Preferences > Highlighting > Style All Occurrences of Token.
+        o.matchCase = settings_.markMatchCase;
+        o.wholeWord = settings_.markWholeWord;
         core::SearchEngine(s).markAll(o, ind);
     });
 }
@@ -1209,7 +1290,12 @@ void MainWindow::cmdFoldCurrent(bool fold)
         sptr_t line = s.lineOf(s(SCI_GETCURRENTPOS));
         if (!(s(SCI_GETFOLDLEVEL, static_cast<uptr_t>(line)) & SC_FOLDLEVELHEADERFLAG))
             line = s(SCI_GETFOLDPARENT, static_cast<uptr_t>(line));
-        if (line >= 0)
+        if (line < 0)
+            return;
+        // Preferences > Editing 1: the commands toggle the current level.
+        if (settings_.foldToggle)
+            s(SCI_FOLDLINE, static_cast<uptr_t>(line), SC_FOLDACTION_TOGGLE);
+        else
             s(SCI_FOLDLINE, static_cast<uptr_t>(line), fold ? SC_FOLDACTION_CONTRACT : SC_FOLDACTION_EXPAND);
     });
 }

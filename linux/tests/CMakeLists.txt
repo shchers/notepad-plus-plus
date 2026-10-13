@@ -26,6 +26,12 @@ target_compile_definitions(nppgtk_panels_tests PRIVATE
   NPP_SOURCE_ROOT="${NPP_ROOT}")
 add_dependencies(nppgtk_panels_tests nppgtk_data)
 
+add_executable(nppgtk_prefs_tests prefs_test.cpp)
+target_link_libraries(nppgtk_prefs_tests PRIVATE nppgtk_core)
+target_compile_definitions(nppgtk_prefs_tests PRIVATE
+  NPP_TEST_DATA_DIR="${NPP_BUILD_DATA_DIR}")
+add_dependencies(nppgtk_prefs_tests nppgtk_data)
+
 add_executable(nppgtk_ui_tests ui_test.cpp)
 target_link_libraries(nppgtk_ui_tests PRIVATE nppgtk_core)
 target_compile_definitions(nppgtk_ui_tests PRIVATE
@@ -65,6 +71,7 @@ add_test(NAME search_shortcuts_i18n COMMAND ${_wrap} $<TARGET_FILE:nppgtk_phase3
 add_test(NAME dialogs_and_commands COMMAND ${_wrap} $<TARGET_FILE:nppgtk_ui_tests>)
 add_test(NAME panels COMMAND ${_wrap} $<TARGET_FILE:nppgtk_panels_tests>)
 add_test(NAME plugins COMMAND ${_wrap} $<TARGET_FILE:nppgtk_plugins_tests>)
+add_test(NAME preferences COMMAND ${_wrap} $<TARGET_FILE:nppgtk_prefs_tests>)
 
 # Launch the real application on a sample file and let it quit on its own,
 # with a fresh configuration each time (a session left by an earlier run
@@ -98,7 +105,7 @@ if(_wrap)
   # tests on the developer's real session.
   list(APPEND _env "GDK_BACKEND=x11")
 endif()
-set_tests_properties(unit_and_widget documents_and_sessions search_shortcuts_i18n dialogs_and_commands panels plugins PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
+set_tests_properties(unit_and_widget documents_and_sessions search_shortcuts_i18n dialogs_and_commands panels plugins preferences PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
 set(_launch_env ${_env})
 list(TRANSFORM _launch_env REPLACE "^XDG_CONFIG_HOME=.*" "XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/test-config-launch")
 list(TRANSFORM _launch_env REPLACE "^NPP_GTK_PLUGINS_DIR=.*" "NPP_GTK_PLUGINS_DIR=${NPP_TEST_PLUGINS_DIR}:${NPP_EXAMPLE_PLUGINS_DIR}")

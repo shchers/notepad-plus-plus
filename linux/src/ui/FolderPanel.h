@@ -26,6 +26,8 @@ struct FolderPanelHost {
     std::function<void(const std::string& uri)> openUri;
     std::function<std::filesystem::path()> currentFile; // "Locate current file"
     std::function<std::filesystem::path()> chooseFolder; // "Add"
+    // Preferences > MISC.: "Allow loading symlinks in Folder as Workspace panel".
+    std::function<bool()> followSymlinks;
 };
 
 class FolderPanel {

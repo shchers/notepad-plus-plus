@@ -45,6 +45,19 @@ struct FindHost {
     std::function<void(EditorView&)> globallyModified;
 };
 
+// Preferences > Searching.
+struct FindPrefs {
+    bool fillWithSelection = true;
+    int fillMaxChars = 1024;
+    bool selectWordUnderCaret = true;
+    int inSelectionThreshold = 1024; // characters; 0 = never automatic
+    bool fifDirFromDoc = false;
+    bool monospace = false;
+    bool staysOpen = false;          // after a search that fills the results panel
+    bool confirmReplaceAllDocs = true;
+    bool replaceNoMove = false;
+};
+
 class FindDialog {
 public:
     enum class Tab { Find = 0, Replace, FindInFiles, Mark };
@@ -60,6 +73,7 @@ public:
     bool isVisible() const;
     GtkWidget* window() const { return window_; }
     void retranslate();
+    void setPrefs(const FindPrefs& p);
 
     core::FindOptions options() const;  // from the fields
     void setSearchText(const std::string& s);
@@ -121,6 +135,7 @@ private:
     GtkWidget* what_ = nullptr;      // GtkComboBoxText with entry
     GtkWidget* with_ = nullptr;
     GtkWidget* filters_ = nullptr;
+    FindPrefs prefs_;
     GtkWidget* dir_ = nullptr;
     GtkWidget* withRow_[2] = {};
     GtkWidget* filtersRow_[2] = {};

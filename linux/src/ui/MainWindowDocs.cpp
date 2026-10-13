@@ -12,6 +12,7 @@
 #include "Notepad_plus_msgs.h"
 
 #include <algorithm>
+#include <cstring>
 #include <set>
 #include <system_error>
 
@@ -73,8 +74,11 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
         if (t == activeTab())
             refreshTitle();
     };
-    v.onTextModified = [this, b] {
+    v.onTextModified = [this, b, t] {
         b->snapshotStale = true;
+        // Preferences > New Document: an untitled document is named after its first line.
+        if (settings_.firstLineAsTabName && b->isUntitled() && !b->untitledRenamed && !closing_ && t->view->currentPos() <= t->view->sci().lineEnd(0) + 1)
+            nameAfterFirstLine(*b, *t->view);
         // Upstream re-parses the Function List after edits.
         if (funcList_ && !closing_ && activeBuffer() == b && dock_->isShown("functionList"))
             funcList_->scheduleReload();
@@ -88,6 +92,13 @@ MainWindow::Tab* MainWindow::addTab(std::shared_ptr<core::Buffer> buf, int viewI
     v.onUriDropped = [this](std::string_view uris) { openUriList(uris); };
     v.onMacroRecord = [this](int msg, uptr_t w, sptr_t l) { recordScintilla(msg, w, l); };
     v.onScintillaNotify = [this, t](const SCNotification& n) { forwardScintillaNotification(*t, n); };
+    v.setOptions(&editorOpts_);
+    v.largeFile = t->buf->largeFile;
+    v.otherView = [this, t]() -> EditorView* {
+        Tab* o = gtk_widget_get_visible(notebooks_[1 - t->viewIdx]) ? currentTabOf(1 - t->viewIdx) : nullptr;
+        return o ? o->view.get() : nullptr;
+    };
+    v.onLinkClicked = [this](const std::string& url) { openUri(url.rfind("www.", 0) == 0 ? "http://" + url : url); };
     if (modEventFlags_)
         v.setModEventMask(modEventFlags_);
     if (recording_)
@@ -116,6 +127,7 @@ void MainWindow::attachLabel(Tab& t)
     gtk_container_add(GTK_CONTAINER(ebox), box);
     gtk_widget_show_all(ebox);
     t.label = ebox;
+    t.closeButton = close;
 
     auto freeCtx = +[](gpointer p, GClosure*) { delete static_cast<TabCtx*>(p); };
     g_signal_connect_data(close, "clicked", G_CALLBACK(+[](GtkButton*, gpointer p) {
@@ -127,6 +139,11 @@ void MainWindow::attachLabel(Tab& t)
     g_signal_connect_data(ebox, "button-press-event", G_CALLBACK(+[](GtkWidget*, GdkEventButton* ev, gpointer p) -> gboolean {
                               auto* c = static_cast<TabCtx*>(p);
                               Tab* tab = c->win->tabForPage(c->page);
+                              // Preferences > Tab Bar: "Double click to close document".
+                              if (tab && ev->type == GDK_2BUTTON_PRESS && ev->button == 1 && c->win->settings_.tabDoubleClickClose) {
+                                  c->win->closeTab(*tab);
+                                  return TRUE;
+                              }
                               if (!tab || ev->type != GDK_BUTTON_PRESS)
                                   return FALSE;
                               if (ev->button == 2) {
@@ -149,7 +166,7 @@ void MainWindow::attachLabel(Tab& t)
 
     GtkNotebook* nb = GTK_NOTEBOOK(notebooks_[t.viewIdx]);
     gtk_notebook_append_page(nb, page, ebox);
-    gtk_notebook_set_tab_reorderable(nb, page, TRUE);
+    gtk_notebook_set_tab_reorderable(nb, page, !settings_.tabLock);
     gtk_widget_show(notebooks_[t.viewIdx]);
     refreshTab(t);
 }
@@ -185,6 +202,7 @@ void MainWindow::releaseBuffer(core::Buffer& b)
     monitors_.erase(&b);
     if (activatedBuffer_ == &b)
         activatedBuffer_ = nullptr;
+    mru_.erase(std::remove(mru_.begin(), mru_.end(), &b), mru_.end());
     if (closing_)
         return; // exit: snapshots stay for the next start
     if (!b.isUntitled()) {
@@ -405,8 +423,17 @@ void MainWindow::applyLoaded(Tab& t, const fs::path& p, core::LoadedFile&& lf)
     v.setEolMode(v.detectEolMode(SC_EOL_LF), false);
     if (b.userReadOnly)
         v.execute(SCI_SETREADONLY, 1);
+    // Preferences > Performance: a large file opens without syntax highlighting.
+    b.largeFile = settings_.largeFileRestrict && lf.stamp.size >= static_cast<std::int64_t>(settings_.largeFileMB) * 1024 * 1024;
+    for (Tab* x : tabsOf(b))
+        x->view->largeFile = b.largeFile;
+    if (b.largeFile) {
+        setLanguage(b, langs_.plainText());
+        applyViewSettings(v);
+    }
     if (!p.empty()) {
-        detectLanguage(b, p);
+        if (!b.largeFile)
+            detectLanguage(b, p);
         lastDir_ = p.parent_path();
         recent_.remove(p.string());
         refreshRecentMenu();
@@ -414,11 +441,61 @@ void MainWindow::applyLoaded(Tab& t, const fs::path& p, core::LoadedFile&& lf)
     }
 }
 
+void MainWindow::openFolder(const fs::path& dir)
+{
+    // Upstream: a dropped folder goes to Folder as Workspace, or with
+    // Preferences > Default Directory's option all its files are opened.
+    if (!settings_.dropFolderOpensFiles) {
+        folder_->addRoot(dir);
+        dock_->show("folderAsWorkspace", false);
+        return;
+    }
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec)
+            break;
+        const std::string name = it->path().filename().string();
+        if (!name.empty() && name[0] == '.') {
+            if (it->is_directory(ec))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (it->is_regular_file(ec))
+            files.push_back(it->path());
+    }
+    std::sort(files.begin(), files.end());
+    openFiles(files);
+}
+
 int MainWindow::openFiles(const std::vector<fs::path>& files, const OpenOptions& opts)
 {
     int opened = 0;
+    auto hasExt = [](const fs::path& p, std::string ext) {
+        if (!ext.empty() && ext[0] == '.')
+            ext.erase(0, 1);
+        return !ext.empty() && g_ascii_strcasecmp(p.extension().c_str(), ("." + ext).c_str()) == 0;
+    };
     for (const fs::path& f : files) {
         const fs::path p = normalisedPath(f);
+        std::error_code dirEc;
+        if (fs::is_directory(p, dirEc)) {
+            openFolder(p);
+            continue;
+        }
+        // Preferences > MISC.: session and workspace files by extension.
+        if (hasExt(p, settings_.sessionExt)) {
+            std::string err;
+            if (!loadSession(p, &err))
+                showError("Cannot load session", err);
+            continue;
+        }
+        if (hasExt(p, settings_.workspaceExt) && projects_[0]) {
+            projects_[0]->openWorkspace(p);
+            dock_->show("project1", false);
+            continue;
+        }
         Tab* t = nullptr;
         if (core::Buffer* existing = findByPath(p)) {
             t = tabOf(*existing, activeView_);
@@ -427,7 +504,7 @@ int MainWindow::openFiles(const std::vector<fs::path>& files, const OpenOptions&
         } else {
             std::string err;
             notifyPlugins(NPPN_FILEBEFORELOAD);
-            auto lf = core::loadFile(p, -1, &err);
+            auto lf = core::loadFile(p, settings_.autodetectEncoding ? -1 : 65001, &err);
             if (!lf) {
                 notifyPlugins(NPPN_FILELOADFAILED);
                 showError("Cannot open file \"" + p.filename().string() + "\"", err);
@@ -489,6 +566,46 @@ void MainWindow::applyBufferLanguage(EditorView& v, const core::Buffer& b)
     } else if (b.language) {
         v.applyLanguage(*b.language, langs_, styles_);
     }
+    languageExtras(v, b);
+}
+
+void MainWindow::languageExtras(EditorView& v, const core::Buffer& b)
+{
+    v.setApi(apiFor(b));
+    // Preferences > Language: backslash as escape character for SQL.
+    if (b.language && (b.language->name == "sql" || b.language->name == "mssql")) {
+        v.execute(SCI_SETPROPERTY, reinterpret_cast<uptr_t>("sql.backslash.escapes"),
+                  reinterpret_cast<sptr_t>(settings_.sqlBackslashEscape ? "1" : "0"));
+        v.execute(SCI_COLOURISE, 0, -1);
+    }
+}
+
+void MainWindow::nameAfterFirstLine(core::Buffer& b, EditorView& v)
+{
+    // Upstream Buffer::normalizeTabName: trimmed, without the characters a
+    // file name cannot have, at most 63 characters.
+    std::string line = v.sci().lineText(0);
+    std::string name;
+    for (char c : line)
+        if (static_cast<unsigned char>(c) >= 0x20 && !std::strchr("\\/:*?\"<>|", c))
+            name += c;
+    const auto first = name.find_first_not_of(" \t");
+    name = first == std::string::npos ? std::string() : name.substr(first, name.find_last_not_of(" \t") - first + 1);
+    if (g_utf8_strlen(name.c_str(), -1) > 63) {
+        gchar* cut = g_utf8_substring(name.c_str(), 0, 63);
+        name = cut;
+        g_free(cut);
+    }
+    if (name.empty() || name == b.untitledName)
+        return;
+    for (core::Buffer* o : buffers())
+        if (o != &b && o->name() == name)
+            return;
+    notifyPlugins(NPPN_FILEBEFORERENAME, &b);
+    b.untitledName = name;
+    refreshBufferTabs(b);
+    refreshTitle();
+    notifyPlugins(NPPN_FILERENAMED, &b);
 }
 
 void MainWindow::setUserLanguage(core::Buffer& b, const core::UserLanguage& udl)
@@ -546,6 +663,7 @@ void MainWindow::setLanguage(core::Buffer& b, const core::Language& lang)
     b.userLanguage = nullptr;
     for (Tab* t : tabsOf(b)) {
         t->view->applyLanguage(lang, langs_, styles_);
+        languageExtras(*t->view, b);
         applyViewSettings(*t->view);
     }
     if (activeBuffer() == &b) {
@@ -591,8 +709,8 @@ bool MainWindow::save(core::Buffer& b, bool saveAs, const fs::path& to)
         if (!b.isUntitled()) {
             gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(dlg), b.path.c_str());
         } else {
-            if (!lastDir_.empty())
-                gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), lastDir_.c_str());
+            if (const fs::path dir = dialogFolder(); !dir.empty())
+                gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), dir.c_str());
             gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dlg), b.untitledName.c_str());
         }
         const gint res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(dlg));
@@ -676,6 +794,15 @@ bool MainWindow::closeTab(Tab& t, bool keepOne)
     if (tabsOf(*t.buf).size() == 1 && !confirmSave(*t.buf))
         return false;
     removeTab(t);
+    // Preferences > Tab Bar: "Exit on close the last tab".
+    if (tabs_.empty() && keepOne && !closing_ && settings_.tabExitOnLast) {
+        g_idle_add(+[](gpointer w) -> gboolean {
+            gtk_window_close(GTK_WINDOW(w));
+            return G_SOURCE_REMOVE;
+        }, window_);
+        newDocument(); // until the window goes (or if leaving is cancelled)
+        return true;
+    }
     if (tabs_.empty() && keepOne && !closing_)
         newDocument(); // upstream always keeps one document open
     refreshAll();
@@ -792,6 +919,9 @@ void MainWindow::checkExternalChanges()
             b.diskStamp = st; // ask again only on the next change
         else if (!reloadBuffer(b, &err))
             showError("Cannot reload \"" + b.name() + "\"", err);
+        else if (settings_.scrollToEndAfterUpdate) // Preferences > MISC., like tail -f
+            for (Tab* t : tabsOf(b))
+                t->view->execute(SCI_DOCUMENTEND);
     }
     checkingChanges_ = false;
     refreshAll();
@@ -898,8 +1028,10 @@ MainWindow::Tab* MainWindow::openSessionFile(const core::SessionFile& f, int vie
         t->view->restorePosition({f.firstVisibleLine, f.xOffset, f.startPos, f.endPos, f.selMode, f.scrollWidth});
         return t;
     }
-    // Upstream drops entries whose file is gone (KeepSessionAbsentFileEntries off).
-    if (!hasBackup && (untitled || !fs::is_regular_file(f.filename, ec)))
+    // Upstream drops entries whose file is gone, unless Preferences > Backup >
+    // "Remember inaccessible files" (KeepSessionAbsentFileEntries): then the
+    // document opens empty and is created on save.
+    if (!hasBackup && (untitled || (!fs::is_regular_file(f.filename, ec) && !settings_.keepAbsentSessionFiles)))
         return nullptr;
 
     std::string err;
@@ -1051,6 +1183,11 @@ bool MainWindow::requestQuit()
 
 bool MainWindow::quitConfirmed()
 {
+    if (!exitSessionFile_.empty()) {
+        std::string err;
+        if (!saveSession(exitSessionFile_, &err))
+            g_warning("Cannot write the session: %s", err.c_str());
+    }
     // A changed workspace in a Project Panel is offered for saving first.
     for (auto& p : projects_)
         if (p && !p->confirmClose())

@@ -125,6 +125,8 @@ public:
     platform::Settings& settings() { return settings_; }
     const std::vector<core::UserLanguage>& userLanguages() const { return udls_; }
     const core::UserLanguage* userLanguage(const std::string& name) const;
+    // Edit > Insert > Date Time (customized): upstream's Windows date picture.
+    static std::string formatCustomDate(const std::string& windowsFormat);
     // Runs a menu command by upstream ID (menuCmdID.h), as WM_COMMAND does.
     bool runCommand(int id) { return cmds_.run(id); }
     bool hasCommand(int id) const { return cmds_.has(id); }
@@ -188,6 +190,9 @@ public:
     void sendPluginCommandLine(const std::string& message);
     // NPPM_GETCURRENTCMDLINE answers this.
     void setCommandLine(std::string cmdLine) { cmdLine_ = std::move(cmdLine); }
+    // Preferences > Multi-Instance "Open session in a new instance": this
+    // session file is written again when the window closes.
+    void setExitSessionFile(std::filesystem::path f) { exitSessionFile_ = std::move(f); }
     // Startup done: NPPN_READY, then the plugin panels that were open at the
     // last exit are opened again (through their plugin's command, as upstream).
     void pluginsReady();
@@ -221,6 +226,7 @@ private:
         int viewIdx = kMainView;
         GtkWidget* label = nullptr;    // event box holding text + close button
         GtkWidget* labelText = nullptr;
+        GtkWidget* closeButton = nullptr;
     };
 
     // Construction helpers (MainWindow.cpp)
@@ -274,6 +280,9 @@ private:
     void setUserLanguage(core::Buffer& b, const core::UserLanguage& udl);
     void reapplyLanguage(core::Buffer& b);
     void applyBufferLanguage(EditorView& v, const core::Buffer& b);
+    void languageExtras(EditorView& v, const core::Buffer& b); // auto-completion file, SQL escapes
+    void nameAfterFirstLine(core::Buffer& b, EditorView& v);
+    void openFolder(const std::filesystem::path& dir);        // dropped or given folder
     // Upstream order: a UDL's extensions, Style Configurator "User ext.",
     // then the built-in languages.
     void detectLanguage(core::Buffer& b, const std::filesystem::path& p);
@@ -394,7 +403,16 @@ private:
     void cmdRunMultiMacro();
     void cmdRun();
     void cmdShortcutMapper(int tab); // MainWindowDialogs.cpp
-    void cmdPreferences();
+    void cmdPreferences();           // MainWindowPrefs.cpp
+
+    // Preferences in effect (MainWindowPrefs.cpp)
+    void updateEditorOptions();
+    void applyDarkMode();
+    void applyTabBar();
+    void applyToolbarIcons();
+    std::filesystem::path dialogFolder() const; // Preferences > Default Directory
+    bool desktopPrefersDark() const;
+    const core::ApiFile* apiFor(const core::Buffer& b);
     void cmdColumnEditor();
 
     // Docking panels (MainWindowPanels.cpp)
@@ -484,6 +502,15 @@ private:
     guint snapshotTimer_ = 0;
     GtkPrintSettings* printSettings_ = nullptr; // kept between print jobs, as upstream keeps its DEVMODE
 
+    EditorOptions editorOpts_;                    // Preferences for the editing aids
+    std::unique_ptr<core::ApiCatalog> apis_;       // autoCompletion/*.xml
+    GtkCssProvider* tabCss_ = nullptr;            // Preferences > Tab Bar
+    GDBusConnection* colorSchemeBus_ = nullptr;   // dark mode following the desktop
+    guint colorSchemeWatch_ = 0;
+    bool altAlone_ = false;                       // Alt pressed with no other key: toggles a hidden menu
+    std::vector<const core::Buffer*> mru_;         // Ctrl+Tab order, most recent first
+    bool mruSwitching_ = false;                   // Ctrl+Tab cycling, until Ctrl is released
+
     std::unique_ptr<PluginManager> plugins_;
     std::vector<std::string> pluginErrors_;
     std::vector<PluginPanel> pluginPanels_;
@@ -492,9 +519,9 @@ private:
     std::map<int, std::pair<std::string, std::string>> pluginIcons_; // command -> (icon, dark icon)
     const core::Buffer* activatedBuffer_ = nullptr; // last NPPN_BUFFERACTIVATED
     std::string cmdLine_;
+    std::filesystem::path exitSessionFile_;
     std::wstring pluginMessageArg_;               // -pluginMessage, alive while plugins may read it
     int modEventFlags_ = 0;                       // NPPM_ADDSCNMODIFIEDFLAGS
-    int lineNumberWidthMode_ = 0;                 // NPPM_SETLINENUMBERWIDTHMODE
     bool pluginsShutDown_ = false;
     bool tabBarHidden_ = false;
     bool hidingPluginPanel_ = false;               // NPPM_DMMHIDE, not the user

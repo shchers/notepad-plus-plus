@@ -143,6 +143,8 @@ void FolderPanel::fill(GtkTreeIter* parent, const fs::path& dir)
         if (name.empty() || name[0] == '.') // hidden on Linux
             continue;
         std::error_code ec2;
+        if (host_.followSymlinks && !host_.followSymlinks() && e.is_symlink(ec2))
+            continue;
         (e.is_directory(ec2) ? dirs : files).push_back(e);
     }
     auto byName = [](const fs::directory_entry& a, const fs::directory_entry& b) {

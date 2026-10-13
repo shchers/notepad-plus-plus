@@ -29,7 +29,8 @@ backend of Scintilla: tabbed editing in two views, syntax highlighting for
 all Notepad++ languages via Lexilla, Notepad++ colour themes, encoding
 detection, Boost-regex find/replace, macros, sessions, docking panels and
 plugins built from source with the included SDK
-(pkg-config notepad-plus-plus-gtk-plugin). Auto-completion is not yet ported.")
+(pkg-config notepad-plus-plus-gtk-plugin), auto-completion, smart highlighting
+and Notepad++'s Preferences.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://notepad-plus-plus.org/")
 set(CPACK_PACKAGING_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 set(CPACK_STRIP_FILES ON)

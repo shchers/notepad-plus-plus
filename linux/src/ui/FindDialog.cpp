@@ -51,16 +51,16 @@ bool active(GtkWidget* toggle) { return gtk_toggle_button_get_active(GTK_TOGGLE_
 
 // The selection on one line, else the word at the caret (upstream
 // setSearchTextWithSettings with "select word under caret").
-std::string selectionOrWord(EditorView& v)
+std::string selectionOrWord(EditorView& v, bool selectWord = true, std::size_t maxChars = 1024)
 {
     std::string s = v.selectedText();
-    if (s.empty()) {
+    if (s.empty() && selectWord) {
         const sptr_t p = v.currentPos();
         const sptr_t a = v.execute(SCI_WORDSTARTPOSITION, static_cast<uptr_t>(p), true);
         const sptr_t b = v.execute(SCI_WORDENDPOSITION, static_cast<uptr_t>(p), true);
         s = v.sci().range(a, b);
     }
-    if (s.find_first_of("\r\n") != std::string::npos || s.size() > 1024)
+    if (s.find_first_of("\r\n") != std::string::npos || s.size() > maxChars)
         return {};
     return s;
 }
@@ -417,6 +417,19 @@ void FindDialog::setSearchText(const std::string& s)
     setComboText(what_, s);
 }
 
+void FindDialog::setPrefs(const FindPrefs& p)
+{
+    prefs_ = p;
+    // Monospaced font in the text fields.
+    for (GtkWidget* combo : {what_, with_}) {
+        GtkStyleContext* ctx = gtk_widget_get_style_context(gtk_bin_get_child(GTK_BIN(combo)));
+        if (p.monospace)
+            gtk_style_context_add_class(ctx, "monospace");
+        else
+            gtk_style_context_remove_class(ctx, "monospace");
+    }
+}
+
 void FindDialog::setDirectory(const std::string& dir)
 {
     setComboText(dir_, dir);
@@ -430,17 +443,20 @@ void FindDialog::setFilters(const std::string& filters)
 void FindDialog::show(Tab tab)
 {
     if (EditorView* v = view()) {
-        const std::string s = selectionOrWord(*v);
-        if (!s.empty())
-            setSearchText(s);
-        // A selection over several lines: search inside it, as upstream.
+        // Preferences > Searching: fill with the selection (or the word at the caret).
         const sptr_t a = v->execute(SCI_GETSELECTIONSTART), b = v->execute(SCI_GETSELECTIONEND);
-        if (v->lineFromPos(a) != v->lineFromPos(b))
+        if (prefs_.fillWithSelection) {
+            const std::string s = selectionOrWord(*v, prefs_.selectWordUnderCaret, static_cast<std::size_t>(std::max(prefs_.fillMaxChars, 1)));
+            if (!s.empty())
+                setSearchText(s);
+        }
+        // A large selection: search inside it, as upstream.
+        if (prefs_.inSelectionThreshold > 0 && b - a >= prefs_.inSelectionThreshold)
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inSelection_), TRUE);
-        else if (a == b)
+        else if (a == b || prefs_.inSelectionThreshold > 0)
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inSelection_), FALSE);
     }
-    if (tab == Tab::FindInFiles && comboText(dir_).empty() && host_.currentDirectory) {
+    if (tab == Tab::FindInFiles && (comboText(dir_).empty() || prefs_.fifDirFromDoc) && host_.currentDirectory) {
         const fs::path d = host_.currentDirectory();
         if (!d.empty())
             setDirectory(d.string());
@@ -537,10 +553,14 @@ void FindDialog::click(int id)
     case IDC_FINDALL_OPENEDFILES:
         record(IDC_FINDALL_OPENEDFILES, o, kOpFind | kOpGlobal);
         doFindAllInOpened(o);
+        if (!prefs_.staysOpen)
+            hide();
         break;
     case IDC_FINDALL_CURRENTFILE:
         record(IDC_FINDALL_CURRENTFILE, o, kOpFind | kOpGlobal);
         doFindAllInCurrent(o);
+        if (!prefs_.staysOpen)
+            hide();
         break;
     case IDREPLACE:
         record(IDREPLACE, o, kOpReplace);
@@ -551,7 +571,7 @@ void FindDialog::click(int id)
         doReplaceAll(o);
         break;
     case IDC_REPLACE_OPENEDFILES:
-        if (host_.confirm
+        if (prefs_.confirmReplaceAllDocs && host_.confirm
             && !host_.confirm(misc("replace-in-open-docs-confirm-title", "Are you sure?"),
                               misc("replace-in-open-docs-confirm-message", "Are you sure you want to replace all occurrences in all open documents?")))
             break;
@@ -561,6 +581,8 @@ void FindDialog::click(int id)
     case IDD_FINDINFILES_FIND_BUTTON:
         record(IDD_FINDINFILES_FIND_BUTTON, o, kOpFind | kOpFif);
         doFindInFiles(o);
+        if (!prefs_.staysOpen)
+            hide();
         break;
     case IDD_FINDINFILES_REPLACEINFILES:
         record(IDD_FINDINFILES_REPLACEINFILES, o, kOpReplace | kOpFif);
@@ -618,7 +640,7 @@ core::FindStatus FindDialog::doReplace(const core::FindOptions& o)
         return core::FindStatus::NotFound;
     }
     bool replaced = false;
-    const core::FindStatus r = core::SearchEngine(v->sci()).replace(o, &replaced);
+    const core::FindStatus r = core::SearchEngine(v->sci()).replace(o, &replaced, !prefs_.replaceNoMove);
     switch (r) {
     case core::FindStatus::Found:
     case core::FindStatus::Wrapped:

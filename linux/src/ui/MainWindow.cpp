@@ -11,6 +11,7 @@
 #include <cctype>
 #include <map>
 #include <set>
+#include <sstream>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -65,6 +66,12 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
     loadUserLanguages();
     recent_.setMax(static_cast<std::size_t>(std::max(settings_.maxRecentFiles, 0)));
     recent_.assign(settings_.recentFiles);
+    if (settings_.recentCheckAtLaunch) // Preferences: drop the files that are gone
+        for (const std::string& f : settings_.recentFiles) {
+            std::error_code ec;
+            if (!fs::exists(f, ec))
+                recent_.remove(f);
+        }
 
     window_ = gtk_application_window_new(app_);
     g_object_ref(window_); // keep alive until our destructor
@@ -111,6 +118,17 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
     g_signal_connect(window_, "drag-data-received", G_CALLBACK(&MainWindow::onDragData), this);
     g_signal_connect(window_, "delete-event", G_CALLBACK(&MainWindow::onDeleteEvent), this);
     g_signal_connect(window_, "key-press-event", G_CALLBACK(&MainWindow::onKeyPress), this);
+    g_signal_connect(window_, "key-release-event", G_CALLBACK(+[](GtkWidget*, GdkEventKey* ev, gpointer self) -> gboolean {
+                         auto* w = static_cast<MainWindow*>(self);
+                         if (w->mruSwitching_ && (ev->keyval == GDK_KEY_Control_L || ev->keyval == GDK_KEY_Control_R)) {
+                             w->mruSwitching_ = false;
+                             w->refreshAll();
+                         }
+                         if (w->altAlone_ && w->settings_.hideMenu && (ev->keyval == GDK_KEY_Alt_L || ev->keyval == GDK_KEY_Alt_R))
+                             gtk_widget_set_visible(w->menubar_, !gtk_widget_get_visible(w->menubar_));
+                         w->altAlone_ = false;
+                         return FALSE;
+                     }), this);
     g_signal_connect(window_, "configure-event", G_CALLBACK(&MainWindow::onConfigure), this);
     g_signal_connect(window_, "window-state-event", G_CALLBACK(&MainWindow::onWindowState), this);
     g_signal_connect(window_, "notify::is-active", G_CALLBACK(&MainWindow::onActiveChanged), this);
@@ -156,12 +174,36 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
     gtk_widget_set_visible(statusBar_, !settings_.hideStatusBar);
     refreshRecentMenu();
     reloadShortcuts();
+    applySettings();
+    if (settings_.darkMode != 0)
+        applyDarkMode();
+    // Dark mode "follow": the desktop's colour scheme changes are followed live.
+    if (GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr)) {
+        colorSchemeBus_ = bus;
+        colorSchemeWatch_ = g_dbus_connection_signal_subscribe(
+            bus, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Settings", "SettingChanged", "/org/freedesktop/portal/desktop",
+            "org.freedesktop.appearance", G_DBUS_SIGNAL_FLAGS_MATCH_ARG0_NAMESPACE,
+            +[](GDBusConnection*, const gchar*, const gchar*, const gchar*, const gchar*, GVariant*, gpointer self) {
+                auto* w = static_cast<MainWindow*>(self);
+                if (w->settings_.darkMode == 2 && !w->closing_)
+                    w->applyDarkMode();
+            },
+            this, nullptr);
+    }
 }
 
 MainWindow::~MainWindow()
 {
     shutdownPlugins();
     closing_ = true;
+    if (colorSchemeBus_) {
+        g_dbus_connection_signal_unsubscribe(colorSchemeBus_, colorSchemeWatch_);
+        g_object_unref(colorSchemeBus_);
+    }
+    if (tabCss_) {
+        gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(tabCss_));
+        g_object_unref(tabCss_);
+    }
     findDlg_.reset();
     if (dock_ && !gtk_widget_in_destruction(window_))
         savePanels();
@@ -358,8 +400,18 @@ void MainWindow::refreshLanguageMenu()
     addTargetItem(dyn_.languages, tr_.command(IDM_LANG_TEXT, "Normal Text"), "win.language", "normal");
     std::map<char, std::vector<const core::Language*>> byLetter;
     for (const core::Language& l : langs_.all())
-        if (!l.isPlainText() && !l.shortName.empty())
+        if (!l.isPlainText() && !l.shortName.empty()
+            && std::find(settings_.langHidden.begin(), settings_.langHidden.end(), l.name) == settings_.langHidden.end())
             byLetter[static_cast<char>(std::toupper(static_cast<unsigned char>(l.shortName[0])))].push_back(&l);
+    if (!settings_.langMenuCompact) { // one flat list
+        std::vector<const core::Language*> all;
+        for (auto& [letter, list] : byLetter)
+            all.insert(all.end(), list.begin(), list.end());
+        std::sort(all.begin(), all.end(), [](auto* a, auto* b) { return g_ascii_strcasecmp(a->shortName.c_str(), b->shortName.c_str()) < 0; });
+        for (const core::Language* l : all)
+            addTargetItem(dyn_.languages, escapeMnemonic(l->shortName), "win.language", l->name);
+        byLetter.clear();
+    }
     for (auto& [letter, list] : byLetter) {
         std::sort(list.begin(), list.end(), [](auto* a, auto* b) { return g_ascii_strcasecmp(a->shortName.c_str(), b->shortName.c_str()) < 0; });
         GMenu* sub = g_menu_new();
@@ -529,6 +581,7 @@ void MainWindow::buildToolbar(GtkWidget* vbox)
             const std::string tip = core::Translator::plain(tr_.command(it.id, it.tip));
             ti = gtk_tool_button_new(nullptr, tip.c_str());
             gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(ti), it.icon);
+            g_object_set_data(G_OBJECT(ti), "npp-icon", const_cast<char*>(it.icon)); // Preferences > Toolbar icon sets
             gtk_actionable_set_action_name(GTK_ACTIONABLE(ti), CommandTable::detailedName(it.id).c_str());
             gtk_widget_set_tooltip_text(GTK_WIDGET(ti), tip.c_str());
         }
@@ -574,7 +627,16 @@ void MainWindow::buildStatusBar(GtkWidget* vbox)
 void MainWindow::refreshTab(Tab& t)
 {
     const core::Buffer& b = *t.buf;
-    const std::string label = (isModified(b) ? "*" : "") + b.name() + (b.userReadOnly ? " [RO]" : "");
+    std::string name = b.name();
+    // Preferences > Tab Bar: "Max. tab label length".
+    if (settings_.tabMaxLabel > 0 && g_utf8_strlen(name.c_str(), -1) > settings_.tabMaxLabel) {
+        gchar* cut = g_utf8_substring(name.c_str(), 0, settings_.tabMaxLabel);
+        name = std::string(cut) + "…";
+        g_free(cut);
+    }
+    const std::string label = (isModified(b) ? "*" : "") + name + (b.userReadOnly ? " [RO]" : "");
+    if (t.closeButton)
+        gtk_widget_set_visible(t.closeButton, settings_.tabCloseButton && (settings_.tabButtonsOnInactive || currentTabOf(t.viewIdx) == &t));
     gtk_label_set_text(GTK_LABEL(t.labelText), label.c_str());
     gtk_widget_set_tooltip_text(t.label, b.fullName().c_str());
     gtk_notebook_set_menu_label_text(GTK_NOTEBOOK(notebooks_[t.viewIdx]), t.view->widget(), b.name().c_str());
@@ -590,7 +652,7 @@ void MainWindow::refreshTitle()
 {
     std::string title = "Notepad++";
     if (const core::Buffer* b = activeBuffer())
-        title = (isModified(*b) ? "*" : "") + b->fullName() + " - Notepad++";
+        title = (isModified(*b) ? "*" : "") + (settings_.titleFileNameOnly ? b->name() : b->fullName()) + " - Notepad++";
     gtk_window_set_title(GTK_WINDOW(window_), title.c_str());
 }
 
@@ -628,6 +690,14 @@ void MainWindow::refreshStatus()
 
 void MainWindow::refreshAll()
 {
+    if (!settings_.tabButtonsOnInactive)
+        for (const auto& t : tabs_)
+            if (t->closeButton)
+                gtk_widget_set_visible(t->closeButton, settings_.tabCloseButton && currentTabOf(t->viewIdx) == t.get());
+    if (const core::Buffer* b = activeBuffer(); b && !mruSwitching_ && (mru_.empty() || mru_.front() != b)) {
+        mru_.erase(std::remove(mru_.begin(), mru_.end(), b), mru_.end());
+        mru_.insert(mru_.begin(), b);
+    }
     syncActionStates();
     refreshTitle();
     refreshStatus();
@@ -641,10 +711,30 @@ void MainWindow::refreshRecentMenu()
         return;
     g_menu_remove_all(dyn_.recent);
     const auto& items = recent_.items();
+    // Preferences > Recent Files History: in a submenu, and how names show.
+    GMenu* target = settings_.recentSubmenu ? g_menu_new() : dyn_.recent;
     for (std::size_t i = 0; i < items.size(); ++i) {
+        std::string shown = items[i];
+        if (settings_.recentDisplay == 0) {
+            shown = fs::path(items[i]).filename().string();
+        } else if (settings_.recentDisplay == 2 && g_utf8_strlen(shown.c_str(), -1) > settings_.recentMaxLen) {
+            // Upstream PathCompactPathEx: the middle gives way to "...".
+            const glong len = g_utf8_strlen(shown.c_str(), -1), keep = std::max(settings_.recentMaxLen - 3, 2);
+            gchar* head = g_utf8_substring(shown.c_str(), 0, keep / 2);
+            gchar* tail = g_utf8_substring(shown.c_str(), len - (keep - keep / 2), len);
+            shown = std::string(head) + "..." + tail;
+            g_free(head);
+            g_free(tail);
+        }
         // Upstream numbering: 1-9 get a mnemonic.
         const std::string num = i < 9 ? "_" + std::to_string(i + 1) : std::to_string(i + 1);
-        addTargetItem(dyn_.recent, num + ": " + escapeMnemonic(items[i]), "win.open-recent", items[i]);
+        addTargetItem(target, num + ": " + escapeMnemonic(shown), "win.open-recent", items[i]);
+    }
+    if (settings_.recentSubmenu) {
+        if (!items.empty())
+            g_menu_append_submenu(dyn_.recent, core::Translator::toMnemonic(tr_.subMenu("file-recentFiles", "&Recent Files")).c_str(),
+                                  G_MENU_MODEL(target));
+        g_object_unref(target);
     }
     for (int id : {IDM_FILE_RESTORELASTCLOSEDFILE, IDM_OPEN_ALL_RECENT_FILE, IDM_CLEAN_RECENT_FILE_LIST})
         cmds_.setEnabled(id, !items.empty());
@@ -669,29 +759,110 @@ void MainWindow::syncActionStates()
 
 void MainWindow::applyViewSettings(EditorView& v)
 {
-    v.execute(SCI_SETWRAPMODE, settings_.wordWrap ? SC_WRAP_WORD : SC_WRAP_NONE);
-    v.execute(SCI_SETVIEWWS, settings_.showSpaces ? SCWS_VISIBLEALWAYS : SCWS_INVISIBLE);
-    v.execute(SCI_SETVIEWEOL, settings_.showEol);
-    v.execute(SCI_SETINDENTATIONGUIDES, settings_.showIndentGuides ? SC_IV_LOOKBOTH : SC_IV_NONE);
-    v.execute(SCI_SETWRAPVISUALFLAGS, settings_.showWrapSymbol ? SC_WRAPVISUALFLAG_END : SC_WRAPVISUALFLAG_NONE);
-    v.execute(SCI_SETZOOM, static_cast<uptr_t>(settings_.zoom));
-    v.execute(SCI_SETTABWIDTH, static_cast<uptr_t>(settings_.tabSize));
-    v.execute(SCI_SETUSETABS, !settings_.replaceTabsBySpace);
-    v.autoIndent = settings_.autoIndent;
+    const platform::Settings& st = settings_;
+    const core::Buffer* buf = nullptr;
+    for (const auto& t : tabs_)
+        if (t->view.get() == &v)
+            buf = t->buf.get();
+    const bool large = buf && buf->largeFile;
+    v.execute(SCI_SETWRAPMODE, st.wordWrap && !(large && st.largeNoWrap) ? SC_WRAP_WORD : SC_WRAP_NONE);
+    v.execute(SCI_SETVIEWWS, st.showSpaces ? SCWS_VISIBLEALWAYS : SCWS_INVISIBLE);
+    v.execute(SCI_SETVIEWEOL, st.showEol);
+    v.execute(SCI_SETINDENTATIONGUIDES, st.showIndentGuides ? SC_IV_LOOKBOTH : SC_IV_NONE);
+    v.execute(SCI_SETWRAPVISUALFLAGS, st.showWrapSymbol ? SC_WRAPVISUALFLAG_END : SC_WRAPVISUALFLAG_NONE);
+    v.execute(SCI_SETZOOM, static_cast<uptr_t>(st.zoom));
+    // Preferences > Indentation: the language's own settings, else the default.
+    int tabSize = st.tabSize;
+    bool spaces = st.replaceTabsBySpace;
+    if (buf && buf->language)
+        if (auto it = st.langIndent.find(buf->language->name); it != st.langIndent.end()) {
+            int sp = spaces ? 1 : 0;
+            if (std::sscanf(it->second.c_str(), "%d,%d", &tabSize, &sp) == 2)
+                spaces = sp != 0;
+        }
+    v.execute(SCI_SETTABWIDTH, static_cast<uptr_t>(std::clamp(tabSize, 1, 64)));
+    v.execute(SCI_SETUSETABS, !spaces);
+    v.execute(SCI_SETBACKSPACEUNINDENTS, st.backspaceUnindent);
+    v.autoIndent = st.autoIndentMode != 0;
     static const int kWrapIndent[] = {SC_WRAPINDENT_FIXED, SC_WRAPINDENT_SAME, SC_WRAPINDENT_INDENT};
-    v.execute(SCI_SETWRAPINDENTMODE, static_cast<uptr_t>(kWrapIndent[std::clamp(settings_.wrapIndent, 0, 2)]));
-    v.execute(SCI_SETCARETSTYLE, settings_.caretWidth == 0 ? CARETSTYLE_BLOCK : CARETSTYLE_LINE);
-    v.execute(SCI_SETCARETWIDTH, static_cast<uptr_t>(std::max(settings_.caretWidth, 1)));
-    v.execute(SCI_SETCARETPERIOD, static_cast<uptr_t>(settings_.caretBlinkMs));
-    v.execute(SCI_SETENDATLASTLINE, !settings_.scrollBeyondLastLine);
-    v.execute(SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION | (settings_.virtualSpace ? SCVS_USERACCESSIBLE : 0));
-    v.execute(SCI_SETCARETLINEVISIBLE, settings_.currentLineHighlight);
-    v.setFoldStyle(settings_.foldStyle);
-    v.setLineNumbersVisible(settings_.showLineNumbers);
-    v.setBookmarkMarginVisible(settings_.showBookmarkMargin);
-    static const int kEdge[] = {EDGE_NONE, EDGE_LINE, EDGE_BACKGROUND};
-    v.execute(SCI_SETEDGEMODE, static_cast<uptr_t>(kEdge[std::clamp(settings_.edgeMode, 0, 2)]));
-    v.execute(SCI_SETEDGECOLUMN, static_cast<uptr_t>(settings_.edgeColumn));
+    v.execute(SCI_SETWRAPINDENTMODE, static_cast<uptr_t>(kWrapIndent[std::clamp(st.wrapIndent, 0, 2)]));
+    v.execute(SCI_SETCARETSTYLE, st.caretWidth == 0 ? CARETSTYLE_BLOCK : CARETSTYLE_LINE);
+    v.execute(SCI_SETCARETWIDTH, static_cast<uptr_t>(std::max(st.caretWidth, 1)));
+    v.execute(SCI_SETCARETPERIOD, static_cast<uptr_t>(st.caretBlinkMs));
+    v.execute(SCI_SETENDATLASTLINE, !st.scrollBeyondLastLine);
+    v.execute(SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION | (st.virtualSpace ? SCVS_USERACCESSIBLE : 0));
+    // Current line indicator: none, background, or a frame.
+    v.execute(SCI_SETCARETLINEVISIBLE, st.currentLineMode != 0);
+    v.execute(SCI_SETCARETLINEFRAME, st.currentLineMode == 2 ? static_cast<uptr_t>(st.currentLineFrame) : 0);
+    v.execute(SCI_SETFONTQUALITY, st.smoothFont ? SC_EFF_QUALITY_LCD_OPTIMIZED : SC_EFF_QUALITY_DEFAULT);
+    v.execute(SCI_SETDRAGDROPENABLED, !st.noSelDragDrop);
+    const core::Style* sel = styles_.global("Selected text colour");
+    if (st.selectedTextFg && sel && sel->fg) {
+        v.execute(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_TEXT, static_cast<sptr_t>(*sel->fg | 0xFF000000u));
+        v.execute(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_ADDITIONAL_TEXT, static_cast<sptr_t>(*sel->fg | 0xFF000000u));
+    } else {
+        v.execute(SCI_RESETELEMENTCOLOUR, SC_ELEMENT_SELECTION_TEXT);
+        v.execute(SCI_RESETELEMENTCOLOUR, SC_ELEMENT_SELECTION_ADDITIONAL_TEXT);
+    }
+    v.execute(SCI_SETMULTIPLESELECTION, st.multiEditing);
+    v.execute(SCI_SETADDITIONALSELECTIONTYPING, st.multiEditing || st.columnToMultiEdit);
+    EditorView::Representations r;
+    r.showNpc = st.showNpc;
+    r.showCcUniEol = st.showCcUniEol;
+    r.npcCodepoint = st.npcDisplay == 1;
+    r.npcCustomColor = st.npcCustomColor;
+    r.includeCcUniEol = st.npcIncludeCcUniEol;
+    r.eolPlain = st.eolDisplay == 1;
+    r.eolCustomColor = st.eolCustomColor;
+    if (const core::Style* s = styles_.global("EOL custom color"); s && s->fg)
+        r.eolColor = *s->fg;
+    if (const core::Style* s = styles_.global("Non-printing characters custom color"); s && s->fg)
+        r.npcColor = *s->fg;
+    v.applyRepresentations(r);
+    v.setFoldStyle(st.foldStyle);
+    v.setLineNumbersVisible(st.showLineNumbers);
+    v.refreshLineNumberWidth();
+    v.setBookmarkMarginVisible(st.showBookmarkMargin);
+    v.setChangeHistory(st.changeHistoryMargin, st.changeHistoryText);
+    // Vertical edge: several columns in line mode (upstream multi-edge).
+    std::vector<int> columns;
+    {
+        std::istringstream in(st.edgeColumns);
+        int c = 0;
+        while (in >> c)
+            if (c > 0 && c <= 8192)
+                columns.push_back(c);
+    }
+    v.execute(SCI_MULTIEDGECLEARALL);
+    const core::Style* edge = styles_.global("Edge colour");
+    const std::uint32_t edgeColour = edge && edge->fg ? *edge->fg : 0x80FFFF;
+    if (st.edgeMode == 0 || columns.empty()) {
+        v.execute(SCI_SETEDGEMODE, EDGE_NONE);
+    } else if (st.edgeMode == 2) {
+        v.execute(SCI_SETEDGEMODE, EDGE_BACKGROUND);
+        v.execute(SCI_SETEDGECOLUMN, static_cast<uptr_t>(columns.front()));
+        v.execute(SCI_SETEDGECOLOUR, edgeColour);
+    } else if (columns.size() == 1) {
+        v.execute(SCI_SETEDGEMODE, EDGE_LINE);
+        v.execute(SCI_SETEDGECOLUMN, static_cast<uptr_t>(columns.front()));
+        v.execute(SCI_SETEDGECOLOUR, edgeColour);
+    } else {
+        v.execute(SCI_SETEDGEMODE, EDGE_MULTILINE);
+        for (int c : columns)
+            v.execute(SCI_MULTIEDGEADDLINE, static_cast<uptr_t>(c), edgeColour);
+    }
+    v.execute(SCI_SETMARGINLEFT, 0, st.paddingLeft);
+    v.execute(SCI_SETMARGINRIGHT, 0, st.paddingRight);
+    // Preferences > Delimiter: extra word characters.
+    if (st.extraWordCharsOn && !st.extraWordChars.empty()) {
+        const std::string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" + st.extraWordChars;
+        v.execute(SCI_SETWORDCHARS, 0, reinterpret_cast<sptr_t>(chars.c_str()));
+    } else {
+        v.execute(SCI_SETCHARSDEFAULT);
+    }
+    v.setLinkStyle(st.linkNoUnderline, st.linkFullBox);
+    if (buf)
+        languageExtras(v, *buf);
 }
 
 void MainWindow::showError(const std::string& primary, const std::string& secondary)
@@ -801,8 +972,18 @@ void MainWindow::onActiveChanged(GObject*, GParamSpec*, gpointer self)
         }
 }
 
-gboolean MainWindow::onKeyPress(GtkWidget* widget, GdkEventKey* ev, gpointer)
+gboolean MainWindow::onKeyPress(GtkWidget* widget, GdkEventKey* ev, gpointer self)
 {
+    // Preferences > General > Menu "Hide": Alt or F10 shows it.
+    auto* w = static_cast<MainWindow*>(self);
+    w->altAlone_ = ev->keyval == GDK_KEY_Alt_L || ev->keyval == GDK_KEY_Alt_R;
+    if (w->settings_.hideMenu && ev->keyval == GDK_KEY_F10 && !(ev->state & gtk_accelerator_get_default_mod_mask())) {
+        const bool show = !gtk_widget_get_visible(w->menubar_);
+        gtk_widget_set_visible(w->menubar_, show);
+        if (show)
+            gtk_menu_shell_select_first(GTK_MENU_SHELL(w->menubar_), FALSE);
+        return TRUE;
+    }
     // When a text entry (find bar, dialogs) has focus, let it handle the key
     // before window accelerators, so Ctrl+C/V/Z/A act on the entry.
     GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(widget));

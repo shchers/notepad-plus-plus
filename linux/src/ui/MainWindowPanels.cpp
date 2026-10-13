@@ -62,6 +62,7 @@ GtkWidget* MainWindow::buildPanels(GtkWidget* center)
     };
     fh.openTerminal = [this](const fs::path& dir) { openTerminal(dir); };
     fh.openUri = [this](const std::string& uri) { openUri(uri); };
+    fh.followSymlinks = [this] { return settings_.faWSymlinks; };
     fh.currentFile = [this] {
         core::Buffer* b = activeBuffer();
         return b && !b->isUntitled() ? b->path : fs::path();
@@ -273,7 +274,29 @@ void MainWindow::restorePanels()
         if (!settings_.projectWorkspaces[i].empty() && fs::is_regular_file(settings_.projectWorkspaces[i], ec))
             projects_[i]->openWorkspace(settings_.projectWorkspaces[i]);
     }
-    dock_->restoreState(settings_.docking);
+    // Upstream: with -nosession (or in another instance) only the panels
+    // ticked in Preferences > Multi-Instance & Date open again.
+    auto state = settings_.docking;
+    if (!useSession_) {
+        const platform::Settings& st = settings_;
+        auto allowed = [&st](const std::string& id) {
+            if (id == kClipboard) return st.noSessionClipboard;
+            if (id == kDocList) return st.noSessionDocList;
+            if (id == kCharPanel) return st.noSessionCharPanel;
+            if (id == kFolder) return st.noSessionFolder;
+            if (id == kDocMap) return st.noSessionDocMap;
+            if (id == kFunctionList) return st.noSessionFuncList;
+            if (id.rfind("project", 0) == 0) return st.noSessionProjects;
+            if (id.rfind("plugin:", 0) == 0) return st.noSessionPlugins;
+            return false;
+        };
+        for (auto& [id, v] : state) {
+            const std::size_t comma = v.find(',');
+            if (id != "sizes" && comma != std::string::npos && v.size() > comma + 1 && !allowed(id))
+                v[comma + 1] = '0'; // "area,shown,..."
+        }
+    }
+    dock_->restoreState(state);
 }
 
 void MainWindow::savePanels()

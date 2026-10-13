@@ -486,10 +486,11 @@ void testPreferences(GtkApplication* app, core::LanguageCatalog& langs)
     st.showLineNumbers = false;
     st.showBookmarkMargin = false;
     st.edgeMode = 1;
-    st.edgeColumn = 72;
+    st.edgeColumns = "72";
     st.virtualSpace = true;
     w->applySettings();
-    CHECK(v.execute(SCI_GETMARGINWIDTHN, 2) == 0 && v.execute(SCI_GETMARGINWIDTHN, 0) == 0 && v.execute(SCI_GETMARGINWIDTHN, 1) == 0);
+    // Margins as upstream: 0 line numbers, 1 bookmarks, 2 change history, 3 folding.
+    CHECK(v.execute(SCI_GETMARGINWIDTHN, 3) == 0 && v.execute(SCI_GETMARGINWIDTHN, 0) == 0 && v.execute(SCI_GETMARGINWIDTHN, 1) == 0);
     CHECK(v.execute(SCI_GETEDGEMODE) == EDGE_LINE && v.execute(SCI_GETEDGECOLUMN) == 72);
     CHECK(v.execute(SCI_GETVIRTUALSPACEOPTIONS) & SCVS_USERACCESSIBLE);
     st.foldStyle = 1;
@@ -666,6 +667,10 @@ void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
     CHECK(dock.areaOf("charPanel") == ui::DockManager::Area::Float && dock.isShown("charPanel"));
     CHECK(w->runCommand(IDM_VIEW_DOC_MAP)); // toggles off
     CHECK(!dock.isShown("documentMap") && !w->commandChecked(IDM_VIEW_DOC_MAP));
+    // These windows run without a session (-nosession): only the panels
+    // ticked in Preferences > Multi-Instance & Date come back, as upstream.
+    platform::Settings& ps = w->settings();
+    ps.noSessionFuncList = ps.noSessionCharPanel = ps.noSessionDocList = ps.noSessionProjects = ps.noSessionDocMap = true;
     w.reset();
 
     auto w2 = makeWindow(app, langs, p);

@@ -24,7 +24,7 @@ All commands run from the repository root.
 /usr/share/notepad-plus-plus-gtk/langs.model.xml        <- upstream, unmodified
 /usr/share/notepad-plus-plus-gtk/stylers.model.xml      <- upstream, unmodified
 /usr/share/notepad-plus-plus-gtk/themes/*.xml           <- upstream PowerEditor/installer/themes
-/usr/share/notepad-plus-plus-gtk/{nativeLang,userDefineLangs,functionList}/  <- upstream data
+/usr/share/notepad-plus-plus-gtk/{nativeLang,userDefineLangs,functionList,autoCompletion}/  <- upstream data
 /usr/share/applications/org.notepad_plus_plus.NotepadPlusPlusGtk.desktop
 /usr/share/metainfo/org.notepad_plus_plus.NotepadPlusPlusGtk.metainfo.xml
 /usr/share/icons/hicolor/{16..256}/apps/org.notepad_plus_plus.NotepadPlusPlusGtk.png

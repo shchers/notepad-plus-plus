@@ -83,10 +83,15 @@ void SearchResults::addFile(const std::string& file, const std::vector<core::Hit
 {
     if (hits.empty())
         return;
-    // Upstream default: one entry per found line, every hit on it coloured.
-    std::map<sptr_t, std::vector<const core::Hit*>> byLine;
-    for (const core::Hit& h : hits)
-        byLine[h.line].push_back(&h);
+    // Upstream default: one entry per found line, every hit on it coloured;
+    // otherwise (Preferences > Searching) one entry per hit.
+    std::vector<std::pair<sptr_t, std::vector<const core::Hit*>>> byLine;
+    for (const core::Hit& h : hits) {
+        if (oneEntryPerLine && !byLine.empty() && byLine.back().first == h.line)
+            byLine.back().second.push_back(&h);
+        else
+            byLine.push_back({h.line, {&h}});
+    }
     pending_.text += "\n  " + file + " " + hitsString(static_cast<int>(hits.size()));
     pending_.marks.emplace_back();
     pending_.infos.push_back(ResultLocation{file, -1, 0, 0});
