@@ -535,8 +535,13 @@ to ... commands, and floating windows remembered across monitors.
 
 **Phase 5 — plugins** (§7).
 
-**Phase 6 — distribution.** Flatpak (portal file chooser already used), Snap,
-AppStream metainfo, a PPA, arm64 builds.
+**Phase 6 — distribution (done).** AppStream metainfo (validated in the test
+suite) and a configurable application ID that names the desktop file, icons
+and D-Bus name; a Flatpak manifest (GNOME runtime, host commands through
+`flatpak-spawn --host`), a snap recipe (core24, strict), signed PPA source
+packages per Ubuntu series from 22.04 on, and amd64 + arm64 builds of every
+format in CI. See `docs/PACKAGING.md`. Phase 5 (plugins) is still open and
+independent of this.
 
 ---
 

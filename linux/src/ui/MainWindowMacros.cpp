@@ -6,6 +6,7 @@
 #include "ui/MainWindow.h"
 
 #include "platform/Paths.h"
+#include "platform/Sandbox.h"
 #include "ui/ShortcutDialog.h"
 
 #include "menuCmdID.h"
@@ -433,8 +434,19 @@ bool MainWindow::runUserCommand(const std::string& cmd, std::string* error)
     } else {
         const core::Buffer* b = activeBuffer();
         const std::string cwd = b && !b->isUntitled() ? b->path.parent_path().string() : g_get_home_dir();
-        ok = g_spawn_async(cwd.c_str(), argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr, &err);
+        // Under Flatpak the program runs on the host, as it would without the sandbox.
+        std::vector<std::string> args;
+        for (gchar** a = argv; *a; ++a)
+            args.emplace_back(*a);
         g_strfreev(argv);
+        const platform::Sandbox sb = platform::currentSandbox();
+        args = platform::hostCommand(args, cwd, sb);
+        std::vector<gchar*> cargv;
+        for (const std::string& a : args)
+            cargv.push_back(const_cast<gchar*>(a.c_str()));
+        cargv.push_back(nullptr);
+        ok = g_spawn_async(sb == platform::Sandbox::Flatpak ? nullptr : cwd.c_str(), cargv.data(), nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr,
+                           nullptr, &err);
     }
     g_free(found);
     if (!ok && error)

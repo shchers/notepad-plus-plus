@@ -26,6 +26,7 @@ RUN apt-get update \
         libgtk-3-dev \
         dpkg-dev file \
         xvfb xauth dbus \
+        appstream desktop-file-utils \
         ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src

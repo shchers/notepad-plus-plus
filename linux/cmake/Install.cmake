@@ -3,7 +3,8 @@
 #   share/notepad-plus-plus-gtk/{langs.model.xml,stylers.model.xml,themes/,
 #                                nativeLang/,userDefineLangs/,functionList/}
 #   share/applications/<app-id>.desktop
-#   share/icons/hicolor/<size>/apps/notepad-plus-plus-gtk.png
+#   share/metainfo/<app-id>.metainfo.xml
+#   share/icons/hicolor/<size>/apps/<app-id>.png
 #   share/man/man1/notepad-plus-plus-gtk.1.gz
 #   share/doc/notepad-plus-plus-gtk/copyright
 
@@ -31,7 +32,19 @@ configure_file("${_pkg}/notepad-plus-plus-gtk.desktop.in"
 install(FILES "${CMAKE_BINARY_DIR}/${NPP_APP_ID}.desktop"
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 
-install(DIRECTORY "${_pkg}/icons/hicolor" DESTINATION ${CMAKE_INSTALL_DATADIR}/icons)
+# AppStream metadata (software centres, Flathub, Snap Store).
+configure_file("${_pkg}/notepad-plus-plus-gtk.metainfo.xml.in"
+               "${CMAKE_BINARY_DIR}/${NPP_APP_ID}.metainfo.xml" @ONLY)
+install(FILES "${CMAKE_BINARY_DIR}/${NPP_APP_ID}.metainfo.xml"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+
+# Icons are named after the application ID, as Flatpak requires.
+file(GLOB _icon_sizes RELATIVE "${_pkg}/icons/hicolor" "${_pkg}/icons/hicolor/*")
+foreach(_size IN LISTS _icon_sizes)
+  install(FILES "${_pkg}/icons/hicolor/${_size}/apps/${NPP_EXE_NAME}.png"
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}/apps
+          RENAME "${NPP_APP_ID}.png")
+endforeach()
 
 # Debian policy wants compressed man pages (lintian: manpage-not-compressed).
 set(_man_gz "${CMAKE_BINARY_DIR}/${NPP_EXE_NAME}.1.gz")

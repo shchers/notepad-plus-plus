@@ -50,9 +50,25 @@ add_test(NAME app_launch
   COMMAND ${_wrap} $<TARGET_FILE:${NPP_EXE_NAME}> -multiInst --exit-after=1500 -n3 "${CMAKE_CURRENT_SOURCE_DIR}/smoke_test.cpp")
 add_test(NAME single_instance
   COMMAND ${_wrap} "${CMAKE_CURRENT_SOURCE_DIR}/single_instance.sh" $<TARGET_FILE:${NPP_EXE_NAME}>)
-set_tests_properties(single_instance PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 ENVIRONMENT "NO_AT_BRIDGE=1")
+set_tests_properties(single_instance PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 ENVIRONMENT "NO_AT_BRIDGE=1;$<$<BOOL:${_wrap}>:GDK_BACKEND=x11>")
 add_test(NAME app_version COMMAND $<TARGET_FILE:${NPP_EXE_NAME}> --version)
 set_tests_properties(app_version PROPERTIES PASS_REGULAR_EXPRESSION "${NPP_VERSION}")
 
+# Packaging metadata: what software centres, Flathub and the Snap Store read.
+find_program(APPSTREAMCLI appstreamcli)
+if(APPSTREAMCLI)
+  add_test(NAME appstream_metainfo COMMAND ${APPSTREAMCLI} validate --no-net "${CMAKE_BINARY_DIR}/${NPP_APP_ID}.metainfo.xml")
+endif()
+find_program(DESKTOP_FILE_VALIDATE desktop-file-validate)
+if(DESKTOP_FILE_VALIDATE)
+  add_test(NAME desktop_file COMMAND ${DESKTOP_FILE_VALIDATE} "${CMAKE_BINARY_DIR}/${NPP_APP_ID}.desktop")
+endif()
+
 set(_env "XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/test-config" "NO_AT_BRIDGE=1")
+if(_wrap)
+  # Under Xvfb, keep GTK on X11: with XDG_RUNTIME_DIR set it would otherwise
+  # try the desktop's default Wayland socket (wayland-0) first and run the
+  # tests on the developer's real session.
+  list(APPEND _env "GDK_BACKEND=x11")
+endif()
 set_tests_properties(unit_and_widget documents_and_sessions search_shortcuts_i18n dialogs_and_commands panels app_launch PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)

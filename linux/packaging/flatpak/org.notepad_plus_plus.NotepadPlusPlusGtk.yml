@@ -1,0 +1,45 @@
+# Flatpak manifest for the GTK port.
+#
+#   flatpak-builder --user --install --force-clean build-flatpak \
+#       linux/packaging/flatpak/org.notepad_plus_plus.NotepadPlusPlusGtk.yml
+#   flatpak run org.notepad_plus_plus.NotepadPlusPlusGtk
+#
+# or linux/scripts/build-flatpak.sh (which also makes a .flatpak bundle).
+# The source is this working tree. For Flathub, use the app ID of the
+# publisher's domain (-DNPP_APP_ID below and the file name) and a `git`
+# source pinned to a tag; see linux/docs/PACKAGING.md.
+app-id: org.notepad_plus_plus.NotepadPlusPlusGtk
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: notepad-plus-plus-gtk
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # A text editor opens files anywhere. The file dialogs use the portal, but
+  # Find in Files, Folder as Workspace, sessions and the files given on the
+  # command line need the real paths.
+  - --filesystem=host
+  # Run commands and "terminal here" start programs on the host through
+  # flatpak-spawn --host (src/platform/Sandbox).
+  - --talk-name=org.freedesktop.Flatpak
+modules:
+  - name: notepad-plus-plus-gtk
+    buildsystem: cmake-ninja
+    subdir: linux
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DNPP_BUILD_TESTS=OFF
+      - -DNPP_APP_ID=org.notepad_plus_plus.NotepadPlusPlusGtk
+    sources:
+      - type: dir
+        path: ../../..
+        skip:
+          - .git
+          - build
+          - dist
+          - build-flatpak
+          - .flatpak-builder

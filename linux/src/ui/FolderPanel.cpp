@@ -499,7 +499,7 @@ void FolderPanel::popupMenu(GdkEventButton* ev)
                                       break;
                                   default: break;
                                   }
-                              }), data, +[](gpointer p, GClosure*) { delete static_cast<Item*>(p); }, G_CONNECT_DEFAULT);
+                              }), data, +[](gpointer p, GClosure*) { delete static_cast<Item*>(p); }, GConnectFlags(0));
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
     };
     auto sep = [&] { gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new()); };

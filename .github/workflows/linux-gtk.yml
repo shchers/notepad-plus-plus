@@ -1,17 +1,22 @@
-# Native Linux (GTK 3) port: build, test and package.
+# Native Linux (GTK 3) port: build, test and package for amd64 and arm64,
+# as .deb, Flatpak and snap, and check that Ubuntu 22.04 still builds it.
 # Only runs when the port or the upstream sources it compiles change.
 name: Linux GTK port
 
 on:
   push:
-    paths: ['linux/**', 'scintilla/**', 'lexilla/**', 'boostregex/**', 'PowerEditor/src/**', '.github/workflows/linux-gtk.yml']
+    paths: ['linux/**', 'scintilla/**', 'lexilla/**', 'boostregex/**', 'PowerEditor/src/**', 'PowerEditor/installer/**', '.github/workflows/linux-gtk.yml']
   pull_request:
-    paths: ['linux/**', 'scintilla/**', 'lexilla/**', 'boostregex/**', 'PowerEditor/src/**', '.github/workflows/linux-gtk.yml']
+    paths: ['linux/**', 'scintilla/**', 'lexilla/**', 'boostregex/**', 'PowerEditor/src/**', 'PowerEditor/installer/**', '.github/workflows/linux-gtk.yml']
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
+  deb:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +29,7 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Test (headless)
+      - name: Test (headless, incl. AppStream and desktop file validation)
         run: env -u DISPLAY ctest --test-dir build --output-on-failure
 
       - name: Package (CPack)
@@ -35,15 +40,91 @@ jobs:
 
       - name: Install on a clean container
         run: |
+          arch=$(dpkg --print-architecture)
           docker run --rm -v "$PWD/dist":/dist ubuntu:24.04 bash -c \
-            'apt-get update -qq && apt-get install -y -qq --no-install-recommends /dist/notepad-plus-plus-gtk_*_amd64.deb && notepad-plus-plus-gtk --version'
+            "apt-get update -qq && apt-get install -y -qq --no-install-recommends /dist/notepad-plus-plus-gtk_*_${arch}.deb && notepad-plus-plus-gtk --version"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: notepad-plus-plus-gtk-deb
+          name: notepad-plus-plus-gtk-deb-${{ matrix.runner }}
           path: |
             dist/*.deb
             build/pkg/*.deb
+
+  # The oldest Ubuntu the PPA targets.
+  jammy:
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    steps:
+      - name: Tools for checkout
+        run: apt-get update -qq && apt-get install -y -qq git ca-certificates sudo
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: linux/scripts/install-build-deps.sh
+      - name: Build and test
+        run: |
+          cmake -S linux -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPP_WARNINGS_AS_ERRORS=ON
+          cmake --build build
+          env -u DISPLAY ctest --test-dir build --output-on-failure
+
+  # Source packages for the PPA (unsigned here; uploads need the maintainer's key).
+  source-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dpkg-dev devscripts debhelper
+      - name: Build source packages
+        run: linux/scripts/build-source-package.sh jammy noble
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notepad-plus-plus-gtk-source
+          path: dist/ppa/
+
+  flatpak:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: org.notepad_plus_plus.NotepadPlusPlusGtk-${{ matrix.arch }}.flatpak
+          manifest-path: linux/packaging/flatpak/org.notepad_plus_plus.NotepadPlusPlusGtk.yml
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
+
+  snap:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the snap project
+        run: linux/scripts/build-snap.sh --prepare
+      - uses: snapcore/action-build@v1
+        id: snap
+        with:
+          path: dist/snap-project
+      - name: Install and run
+        run: |
+          sudo snap install --dangerous ${{ steps.snap.outputs.snap }}
+          notepad-plus-plus-gtk --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notepad-plus-plus-gtk-snap-${{ matrix.runner }}
+          path: ${{ steps.snap.outputs.snap }}
 
   docker:
     runs-on: ubuntu-24.04

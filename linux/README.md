@@ -22,7 +22,8 @@ ctest --test-dir build --output-on-failure
 build/bin/notepad-plus-plus-gtk
 ```
 
-Build a `.deb`:
+Packages: `.deb` (CPack or debhelper), a PPA, Flatpak and snap, for amd64
+and arm64 — see [docs/PACKAGING.md](docs/PACKAGING.md). Build a `.deb`:
 
 ```bash
 cpack --config build/CPackConfig.cmake -B build/pkg     # quick (CPack)
@@ -36,7 +37,7 @@ sudo apt install ./dist/notepad-plus-plus-gtk_*.deb
 | Document | Contents |
 |---|---|
 | [docs/BUILD.md](docs/BUILD.md) | Native and Docker builds, options, running from a container, troubleshooting |
-| [docs/PACKAGING.md](docs/PACKAGING.md) | `.deb` with CPack or debhelper, PPA/source packages, versioning, verification, apt repo |
+| [docs/PACKAGING.md](docs/PACKAGING.md) | `.deb` with CPack or debhelper, PPA, Flatpak, snap, arm64, AppStream, versioning, verification |
 | [docs/PORTING.md](docs/PORTING.md) | Survey of the upstream code, architecture, feature status, module map, roadmap, plugin ABI |
 
 ## What works
@@ -78,10 +79,12 @@ linux/
 │   │                       Find dialog, search results, dialogs, printing, dock and panels
 │   └── main.cpp            CLI compatible with Notepad++ switches
 ├── tests/                  headless CTest suite (Xvfb)
-├── packaging/              .desktop, icons, man page, copyright, CPack maintainer scripts
+├── packaging/              .desktop, AppStream metainfo, icons, man page, copyright,
+│                           CPack maintainer scripts, flatpak/ manifest, snap/ recipe
 ├── debian/                 debhelper packaging (copied to the root by scripts/build-deb.sh)
 ├── docker/                 multi-stage Dockerfile (toolchain, build, artifact, runtime)
-├── scripts/                install-build-deps, build-native, build-deb, docker-build
+├── scripts/                install-build-deps, build-native, build-deb, docker-build,
+│                           build-source-package (PPA), build-flatpak, build-snap
 └── docs/                   BUILD, PACKAGING, PORTING
 ```
 

@@ -412,7 +412,7 @@ public:
     {
         auto* f = new std::function<void()>(std::move(fn));
         g_signal_connect_data(w, signal, G_CALLBACK(+[](GtkWidget*, gpointer p) { (*static_cast<std::function<void()>*>(p))(); }), f,
-                              +[](gpointer p, GClosure*) { delete static_cast<std::function<void()>*>(p); }, G_CONNECT_DEFAULT);
+                              +[](gpointer p, GClosure*) { delete static_cast<std::function<void()>*>(p); }, GConnectFlags(0));
     }
 
 private:

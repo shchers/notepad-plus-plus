@@ -1,0 +1,64 @@
+# Snap recipe. Not used directly: linux/scripts/build-snap.sh fills in
+# @VERSION@ / @APP_ID@ and assembles a project directory (this file as
+# snap/snapcraft.yaml, the tree as a tarball, the icon), because snapcraft
+# builds in a container that only sees its project directory.
+name: notepad-plus-plus-gtk
+base: core24
+version: '@VERSION@'
+summary: Source code editor, a native Linux port of Notepad++
+description: |
+  An unofficial native Linux build of the Notepad++ source tree, using
+  Scintilla's GTK 3 backend, all Lexilla lexers and Notepad++'s own Boost
+  regular expression engine. Syntax highlighting for all Notepad++ languages,
+  Find in Files, macros, Run commands, sessions, docking panels, translations
+  and printing; Notepad++'s own configuration files work as they are.
+
+  Run commands and "terminal here" cannot start programs outside the snap's
+  confinement. This port is not endorsed by the Notepad++ project.
+license: GPL-3.0-only
+grade: devel
+confinement: strict
+icon: snap/gui/notepad-plus-plus-gtk.png
+
+platforms:
+  amd64:
+  arm64:
+
+slots:
+  # Single instance: the running editor owns its application ID on the
+  # session bus, and later invocations hand their files to it.
+  npp-dbus:
+    interface: dbus
+    bus: session
+    name: @APP_ID@
+
+apps:
+  notepad-plus-plus-gtk:
+    command: usr/bin/notepad-plus-plus-gtk
+    extensions: [gnome]
+    desktop: usr/share/applications/@APP_ID@.desktop
+    common-id: @APP_ID@
+    slots: [npp-dbus]
+    plugs:
+      - home
+      - removable-media
+
+parts:
+  notepad-plus-plus-gtk:
+    plugin: cmake
+    source: notepad-plus-plus-gtk-src.tar.xz
+    source-subdir: linux
+    cmake-generator: Ninja
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DNPP_BUILD_TESTS=OFF
+      - -DNPP_APP_ID=@APP_ID@
+    build-packages:
+      - ninja-build
+      - pkg-config
+    override-prime: |
+      craftctl default
+      # The launcher's Icon= is a theme name; the snap needs a path.
+      sed -i "s|^Icon=.*|Icon=\${SNAP}/usr/share/icons/hicolor/256x256/apps/@APP_ID@.png|" \
+          usr/share/applications/@APP_ID@.desktop

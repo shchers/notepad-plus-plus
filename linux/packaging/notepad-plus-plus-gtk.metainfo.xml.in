@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata for software centres (GNOME Software, KDE Discover),
+     Flathub and the Snap Store. Configured by CMake (cmake/Install.cmake);
+     validated by the test suite with `appstreamcli validate`. -->
+<component type="desktop-application">
+  <id>@NPP_APP_ID@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <name>Notepad++ (GTK)</name>
+  <summary>Source code editor, a native Linux port of Notepad++</summary>
+  <developer>
+    <name>Notepad++ GTK port contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      An unofficial native Linux build of the Notepad++ source tree. It uses
+      Scintilla's GTK 3 backend, all Lexilla lexers and Notepad++'s own Boost
+      regular expression engine, so editing, highlighting and searching behave
+      as in Notepad++ on Windows. No Wine is involved.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Syntax highlighting and folding for all Notepad++ languages, User Defined Languages and the Notepad++ colour themes</li>
+      <li>Find, Replace, Find in Files and Mark, with a search results panel and incremental search</li>
+      <li>Macros, Run commands and customisable keyboard shortcuts</li>
+      <li>Two views, sessions, snapshots of unsaved documents and backup on save</li>
+      <li>Function List, Folder as Workspace, Document Map, Project Panels and other docking panels</li>
+      <li>All Notepad++ translations, printing, encoding detection</li>
+    </ul>
+    <p>
+      Notepad++'s own files work as they are: shortcuts.xml, stylers.xml and
+      themes, userDefineLang.xml, session.xml, function list rules and
+      workspaces, and a Windows config.xml can be imported. Plugins are not
+      supported yet.
+    </p>
+    <p>
+      This port is not endorsed by the Notepad++ project.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">@NPP_APP_ID@.desktop</launchable>
+  <provides>
+    <binary>@NPP_EXE_NAME@</binary>
+  </provides>
+
+  <url type="homepage">https://notepad-plus-plus.org/</url>
+  <url type="help">https://npp-user-manual.org/</url>@NPP_METAINFO_PORT_URLS@
+
+  <categories>
+    <category>Development</category>
+    <category>TextEditor</category>
+  </categories>
+  <keywords>
+    <keyword>text</keyword>
+    <keyword>editor</keyword>
+    <keyword>code</keyword>
+    <keyword>notepad</keyword>
+    <keyword>scintilla</keyword>
+    <keyword>regex</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <releases>
+    <release version="@NPP_VERSION@" date="@NPP_RELEASE_DATE@">
+      <description>
+        <p>Native GTK 3 port preview of Notepad++ @NPP_VERSION@.</p>
+      </description>
+    </release>
+  </releases>
+</component>

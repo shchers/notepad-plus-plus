@@ -8,6 +8,7 @@
 #include "core/NppConfig.h"
 #include "core/SearchEngine.h"
 #include "platform/Paths.h"
+#include "platform/Sandbox.h"
 
 #include "menuCmdID.h"
 
@@ -171,6 +172,27 @@ void MainWindow::openUri(const std::string& uri)
 
 void MainWindow::openTerminal(const fs::path& dir)
 {
+    switch (platform::currentSandbox()) {
+    case platform::Sandbox::Flatpak: { // the host's terminal, through flatpak-spawn
+        const std::vector<std::string> args = platform::hostCommand(platform::terminalCommand(), dir, platform::Sandbox::Flatpak);
+        std::vector<gchar*> argv;
+        for (const std::string& a : args)
+            argv.push_back(const_cast<gchar*>(a.c_str()));
+        argv.push_back(nullptr);
+        GError* err = nullptr;
+        if (!g_spawn_async(nullptr, argv.data(), nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr, &err)) {
+            showError("Cannot open a terminal", err ? err->message : "");
+            if (err)
+                g_error_free(err);
+        }
+        return;
+    }
+    case platform::Sandbox::Snap:
+        showError("Cannot open a terminal", "A terminal cannot be started from the Snap sandbox.");
+        return;
+    case platform::Sandbox::None:
+        break;
+    }
     // The desktop's terminal: Debian's alternative, then common ones.
     for (const char* t : {"x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "mate-terminal", "xterm"}) {
         gchar* prog = g_find_program_in_path(t);
@@ -1297,7 +1319,7 @@ void MainWindow::cmdAbout()
                                       " (GTK 3 backend).",
                           "website", "https://notepad-plus-plus.org/",
                           "license-type", GTK_LICENSE_GPL_3_0,
-                          "logo-icon-name", NPP_EXE_NAME,
+                          "logo-icon-name", NPP_APP_ID,
                           "authors", authors,
                           nullptr);
 }

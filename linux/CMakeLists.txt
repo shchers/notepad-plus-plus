@@ -40,8 +40,40 @@ endforeach()
 
 project(notepad-plus-plus-gtk VERSION ${NPP_VERSION3} LANGUAGES C CXX)
 
-set(NPP_APP_ID   "org.notepad_plus_plus.NotepadPlusPlusGtk")
+# The application ID names the D-Bus name (single instance), the desktop
+# file, the icons and the AppStream metainfo, as Flatpak and AppStream
+# expect. A distribution publishing the port (Flathub needs an ID under a
+# domain the publisher controls, e.g. io.github.<user>.NotepadPlusPlusGtk)
+# sets it with -DNPP_APP_ID=...
+set(NPP_APP_ID "org.notepad_plus_plus.NotepadPlusPlusGtk" CACHE STRING "Application ID (reverse DNS)")
+if(NOT NPP_APP_ID MATCHES "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_-]*)+$")
+  message(FATAL_ERROR "NPP_APP_ID '${NPP_APP_ID}' is not a valid reverse-DNS application ID")
+endif()
 set(NPP_EXE_NAME "notepad-plus-plus-gtk")
+# Where the port itself is published. Bug reports for the port must not go
+# to upstream's tracker, so the metainfo names a repository only when set.
+set(NPP_PORT_URL "" CACHE STRING "Repository of the port (AppStream vcs-browser / bugtracker), e.g. https://github.com/<you>/notepad-plus-plus")
+set(NPP_METAINFO_PORT_URLS "")
+if(NPP_PORT_URL)
+  string(REGEX REPLACE "/+$" "" _port_url "${NPP_PORT_URL}")
+  set(NPP_METAINFO_PORT_URLS "\n  <url type=\"vcs-browser\">${_port_url}</url>\n  <url type=\"bugtracker\">${_port_url}/issues</url>")
+endif()
+
+# Release date of this version, from the newest debian/changelog entry
+# (AppStream <release date=...>).
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/debian/changelog" _chlog_sig REGEX "^ -- .*[0-9][0-9]:[0-9][0-9]:[0-9][0-9]" LIMIT_COUNT 1)
+string(REGEX MATCH "([0-9]+) ([A-Z][a-z][a-z]) ([0-9][0-9][0-9][0-9])" _d "${_chlog_sig}")
+set(_months Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
+list(FIND _months "${CMAKE_MATCH_2}" _m)
+math(EXPR _m "${_m} + 1")
+if(_m LESS 10)
+  set(_m "0${_m}")
+endif()
+set(_day "${CMAKE_MATCH_1}")
+if(_day LESS 10)
+  set(_day "0${_day}")
+endif()
+set(NPP_RELEASE_DATE "${CMAKE_MATCH_3}-${_m}-${_day}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -5,7 +5,7 @@ next to it (`scintilla/`, `lexilla/`, `boostregex/`, `PowerEditor/src/`).
 All commands below run from the **repository root**.
 
 Target platform: **Ubuntu 24.04 LTS** (GTK 3.24, GCC 13, CMake 3.28). Also
-tested on Ubuntu 22.04 (GCC 11, CMake 3.22). Anything with GTK ≥ 3.22, a
+tested on Ubuntu 22.04 (GCC 11, CMake 3.22), and on amd64 and arm64. Anything with GTK ≥ 3.22, a
 C++20 compiler (GCC ≥ 11 or Clang ≥ 14) and CMake ≥ 3.22 should work.
 
 - [Native build](#native-build)

@@ -69,7 +69,7 @@ MainWindow::MainWindow(GtkApplication* app, core::LanguageCatalog& langs, bool u
     gtk_window_set_default_size(GTK_WINDOW(window_), settings_.width, settings_.height);
     if (settings_.maximized)
         gtk_window_maximize(GTK_WINDOW(window_));
-    gtk_window_set_icon_name(GTK_WINDOW(window_), NPP_EXE_NAME);
+    gtk_window_set_icon_name(GTK_WINDOW(window_), NPP_APP_ID);
     gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(window_), FALSE);
 
     loadStyles();

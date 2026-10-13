@@ -556,7 +556,7 @@ GtkWidget* ProjectPanel::buildMenu(bool workspaceMenu)
                                   case 3119: s->move(a->item, false); break;
                                   default: break;
                                   }
-                              }), a, +[](gpointer p, GClosure*) { delete static_cast<Act*>(p); }, G_CONNECT_DEFAULT);
+                              }), a, +[](gpointer p, GClosure*) { delete static_cast<Act*>(p); }, GConnectFlags(0));
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
     };
     auto sep = [&] { gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new()); };

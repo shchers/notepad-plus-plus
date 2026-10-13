@@ -1,12 +1,17 @@
-# Packaging the GTK port as a .deb
+# Packaging and distributing the GTK port
 
-There are two routes. Both produce `notepad-plus-plus-gtk_<version>-<rev>_<arch>.deb`
-with the same file layout, and both are lintian-clean.
+| Format | Tooling | Use it for |
+|--------|---------|------------|
+| **.deb, route A** | `cpack` from the CMake build | Quick local packages, CI artifacts, GitHub releases |
+| **.deb, route B** | `dpkg-buildpackage` + `linux/debian/` | A Debian/Ubuntu archive, reproducible distro builds, `-dbgsym` packages |
+| **PPA** | `linux/scripts/build-source-package.sh` (route B source packages) | Ubuntu users: `add-apt-repository ppa:…` |
+| **Flatpak** | `linux/packaging/flatpak/*.yml`, `linux/scripts/build-flatpak.sh` | Every distribution; Flathub |
+| **Snap** | `linux/packaging/snap/snapcraft.yaml.in`, `linux/scripts/build-snap.sh` | Ubuntu and other snapd systems; the Snap Store |
 
-| Route | Tooling | Use it for |
-|-------|---------|------------|
-| **A. CPack** | `cpack` from the CMake build | Quick local packages, CI artifacts, GitHub releases |
-| **B. debhelper** | `dpkg-buildpackage` + `linux/debian/` | A PPA, a Debian/Ubuntu archive, reproducible distro builds, `-dbgsym` packages |
+Every format is built for **amd64 and arm64** (see "Architectures"). The two
+.deb routes give the same file layout and are lintian-clean. All formats
+carry the same AppStream metadata, desktop file and icons, named after the
+application ID (see "Application ID and AppStream").
 
 All commands run from the repository root.
 
@@ -19,8 +24,10 @@ All commands run from the repository root.
 /usr/share/notepad-plus-plus-gtk/langs.model.xml        <- upstream, unmodified
 /usr/share/notepad-plus-plus-gtk/stylers.model.xml      <- upstream, unmodified
 /usr/share/notepad-plus-plus-gtk/themes/*.xml           <- upstream PowerEditor/installer/themes
+/usr/share/notepad-plus-plus-gtk/{nativeLang,userDefineLangs,functionList}/  <- upstream data
 /usr/share/applications/org.notepad_plus_plus.NotepadPlusPlusGtk.desktop
-/usr/share/icons/hicolor/{16..256}/apps/notepad-plus-plus-gtk.png
+/usr/share/metainfo/org.notepad_plus_plus.NotepadPlusPlusGtk.metainfo.xml
+/usr/share/icons/hicolor/{16..256}/apps/org.notepad_plus_plus.NotepadPlusPlusGtk.png
 /usr/share/man/man1/notepad-plus-plus-gtk.1.gz
 /usr/share/doc/notepad-plus-plus-gtk/{copyright,changelog.Debian.gz}
 ```
@@ -100,7 +107,7 @@ What `linux/debian/` does:
 - `copyright`: DEP-5, covering Notepad++ (GPL-3), Scintilla/Lexilla, Boost,
   pugixml (MIT) and uchardet.
 
-### Source package / PPA
+### Source package
 
 A `.dsc` for Launchpad or a Debian archive needs an upstream tarball.
 `linux/scripts/build-deb.sh --source` creates
@@ -119,25 +126,33 @@ automatically as `debian/patches/debian-changes`
 The same options file keeps local `build*/`, `dist/` and `obj-*` directories
 out of the source package.
 
-For a PPA upload (Launchpad builds from source only):
+### PPA
+
+Launchpad builds from source packages only, one upload per Ubuntu series.
+`linux/scripts/build-source-package.sh` makes them from the committed tree
+(HEAD): one orig tarball per upstream version (kept in `dist/ppa/` and
+reused afterwards), and for each series a Debian revision
+`<upstream>-1~ppa<N>~<series>1` with its own changelog entry, so the uploads
+for jammy, noble, … coexist and sort below an official `-1` package.
 
 ```bash
-export DEBFULLNAME="Your Name" DEBEMAIL="you@example.org"
-(cd linux && dch -v 8.9.8.1-1~ppa1~noble1 -D noble "PPA build for Ubuntu 24.04")
-git commit -am "debian: PPA build"
-
-cp -rL linux/debian debian
-# first upload of this upstream version only; otherwise reuse the existing file
-[ -f ../notepad-plus-plus-gtk_8.9.8.1.orig.tar.xz ] || \
-    git archive --format=tar --prefix=notepad-plus-plus-gtk-8.9.8.1/ HEAD \
-        | xz -T0 > ../notepad-plus-plus-gtk_8.9.8.1.orig.tar.xz
-dpkg-buildpackage -S -sa -k<YOUR_GPG_KEY_ID>      # signed, source-only
-dput ppa:<you>/<ppa> ../notepad-plus-plus-gtk_8.9.8.1-1~ppa1~noble1_source.changes
-rm -rf debian
+sudo apt install dpkg-dev devscripts dput
+# check (unsigned) source packages:
+linux/scripts/build-source-package.sh jammy noble
+# signed, and uploaded:
+linux/scripts/build-source-package.sh -k <GPG_KEY_ID> -u ppa:<you>/<ppa> jammy noble
+# a later rebuild of the same upstream version: -r 2 (…~ppa2~noble1)
 ```
 
-Use `-sa` (include the orig) for the first upload of an upstream version and
-`-sd` afterwards.
+The script refuses uncommitted changes, because the package is HEAD. The
+oldest supported series is **Ubuntu 22.04 (jammy)**: CMake 3.22, GCC 11 and
+GTK 3.24 there build the port and pass its tests (checked in CI). Users
+then install with:
+
+```bash
+sudo add-apt-repository ppa:<you>/<ppa>
+sudo apt install notepad-plus-plus-gtk
+```
 
 ---
 
@@ -162,6 +177,93 @@ computed from that release's libraries (Ubuntu 24.04 uses the `t64` library
 names, 22.04 does not). A suffix such as `-1~jammy1` / `-1~noble1` keeps the
 files distinct and upgrades ordered: `-DNPP_DEB_REVISION=1~jammy1` for CPack,
 `--build-arg DEB_REVISION=1~jammy1` for Docker, or a `dch` entry for debhelper.
+
+---
+
+## Flatpak
+
+`linux/packaging/flatpak/org.notepad_plus_plus.NotepadPlusPlusGtk.yml` builds
+the working tree against the GNOME 51 runtime (which provides GTK 3; the
+port bundles Scintilla, Lexilla, Boost.Regex, pugixml and uchardet as on
+every platform).
+
+```bash
+sudo apt install flatpak flatpak-builder
+linux/scripts/build-flatpak.sh --install      # dist/<app-id>.flatpak + user install
+flatpak run org.notepad_plus_plus.NotepadPlusPlusGtk
+```
+
+Sandbox permissions, and why:
+
+| Permission | Reason |
+|---|---|
+| `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc`, `--device=dri` | the window |
+| `--filesystem=host` | an editor opens files anywhere; the file dialogs use the portal, but Find in Files, Folder as Workspace, sessions, Project Panels and command-line files need real paths |
+| `--talk-name=org.freedesktop.Flatpak` | Run commands and "terminal here" run programs on the host with `flatpak-spawn --host` (`src/platform/Sandbox`) |
+
+Inside the sandbox the settings live in
+`~/.var/app/<app-id>/config/notepad-plus-plus-gtk/`. Opening documents and
+URLs, Trash and file monitoring work through GIO and the portals.
+
+**Flathub.** Flathub requires an application ID under a domain the
+publisher controls (e.g. `io.github.<user>.NotepadPlusPlusGtk`). Build with
+`NPP_APP_ID=io.github.<user>.NotepadPlusPlusGtk linux/scripts/build-flatpak.sh`
+(the script derives the manifest; CMake takes `-DNPP_APP_ID`), and in the
+Flathub repository replace the `dir` source by a `git` source pinned to a
+tag. Set `-DNPP_PORT_URL=<your repository>` so the AppStream data names the
+port's own repository and bug tracker. `--filesystem=host` and
+`--talk-name=org.freedesktop.Flatpak` must be justified in the submission
+(both are accepted for code editors).
+
+## Snap
+
+The recipe is `linux/packaging/snap/snapcraft.yaml.in` (core24, the `gnome`
+extension for GTK 3, strict confinement). snapcraft builds in LXD or
+Multipass and only sees its project directory, so
+`linux/scripts/build-snap.sh` assembles one in `dist/snap-project/` (the
+recipe with the version from `resource.h`, the committed tree as a tarball,
+the icon) and runs `snapcraft pack`:
+
+```bash
+sudo snap install snapcraft --classic && sudo snap install lxd && sudo lxd init --auto
+linux/scripts/build-snap.sh
+sudo snap install --dangerous dist/notepad-plus-plus-gtk_*.snap
+```
+
+Confinement: the `home` and `removable-media` plugs give access to files;
+a `dbus` slot lets the running editor own its application ID for the single
+instance. Strict confinement cannot start programs outside the snap, so Run
+commands and "terminal here" report that. For the Snap Store, register the
+name first and raise `grade:` to `stable`.
+
+## Architectures
+
+The port has no architecture-specific code. CI builds and tests every
+format natively on **amd64 and arm64** (GitHub's `ubuntu-24.04-arm`
+runners): `.deb` (CPack and debhelper, installed on a clean container),
+Flatpak (`x86_64`, `aarch64`) and snap. arm64's unsigned `char` was also
+checked on amd64 by building and testing with `-funsigned-char`. Launchpad
+builds the PPA for every architecture the PPA enables (amd64 and arm64 by
+default, armhf / ppc64el / riscv64 if enabled).
+
+Locally, on an arm64 machine every script works as is. On amd64, Docker can
+build for arm64 with emulation (slow):
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install arm64   # once: register qemu
+PLATFORM=linux/arm64 linux/scripts/docker-build.sh deb
+```
+
+## Application ID and AppStream
+
+`NPP_APP_ID` (CMake, default `org.notepad_plus_plus.NotepadPlusPlusGtk`) names
+the D-Bus name for the single instance, the desktop file, the icons and the
+metainfo file, as Flatpak and AppStream expect. The AppStream file
+(`linux/packaging/notepad-plus-plus-gtk.metainfo.xml.in`) takes the version
+from `resource.h` and the release date from the newest
+`linux/debian/changelog` entry; the test suite validates it with
+`appstreamcli validate` and the desktop file with `desktop-file-validate`
+when those tools are installed (`install-build-deps.sh` installs them).
 
 ---
 
@@ -209,7 +311,9 @@ testing.
 
 The package is called `notepad-plus-plus-gtk` and describes itself as an
 *unofficial* port, because "Notepad++" is the upstream project's name.
-Before publishing packages publicly under that name, coordinate with the
-upstream maintainers. The licence is GPL-3 (version 3 only, per
+Before publishing packages publicly under that name (a PPA, Flathub, the
+Snap Store), coordinate with the upstream maintainers; the default
+application ID `org.notepad_plus_plus.*` is upstream's domain and is only
+right if upstream publishes the port itself. The licence is GPL-3 (version 3 only, per
 `LICENSE`), so redistributed packages must offer the corresponding source;
 the `.dsc` + `.orig.tar.xz` from route B satisfy that.

@@ -10,6 +10,7 @@ add_library(nppgtk_core STATIC
   platform/FileIO.cpp
   platform/FileMonitor.cpp
   platform/Paths.cpp
+  platform/Sandbox.cpp
   platform/Settings.cpp
   platform/TextCodec.cpp
   core/EditOps.cpp

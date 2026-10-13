@@ -8,6 +8,7 @@
 #include "core/Session.h"
 #include "core/Workspace.h"
 #include "platform/FileIO.h"
+#include "platform/Sandbox.h"
 #include "ui/EditorView.h"
 
 #include <gtk/gtk.h>
@@ -228,6 +229,18 @@ void testSessionFileBrowser()
     CHECK(core::writeSession(f, s, &err) && readText(f).find("FileBrowser") == std::string::npos);
 }
 
+void testSandbox()
+{
+    using platform::Sandbox;
+    const std::vector<std::string> cmd = {"make", "-j4"};
+    CHECK(platform::hostCommand(cmd, "/src", Sandbox::None) == cmd);
+    CHECK(platform::hostCommand(cmd, "/src", Sandbox::Snap) == cmd);
+    CHECK(platform::hostCommand(cmd, "/src", Sandbox::Flatpak) ==
+          (std::vector<std::string>{"flatpak-spawn", "--host", "--directory=/src", "--", "make", "-j4"}));
+    CHECK(platform::terminalCommand().front() == "sh");
+    CHECK(platform::currentSandbox() == Sandbox::None); // the test suite runs unconfined
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -245,6 +258,8 @@ int main(int argc, char** argv)
     testWorkspace();
     std::printf("session FileBrowser...\n");
     testSessionFileBrowser();
+    std::printf("sandbox...\n");
+    testSandbox();
 
     std::error_code ec;
     fs::remove_all(root, ec);
