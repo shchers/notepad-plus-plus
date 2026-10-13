@@ -49,6 +49,10 @@ set(NPP_APP_ID "org.notepad_plus_plus.NotepadPlusPlusGtk" CACHE STRING "Applicat
 if(NOT NPP_APP_ID MATCHES "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_-]*)+$")
   message(FATAL_ERROR "NPP_APP_ID '${NPP_APP_ID}' is not a valid reverse-DNS application ID")
 endif()
+# AppStream <developer id>: reverse DNS of the publisher, by default the
+# application ID without its last part (io.github.<user>.App -> io.github.<user>).
+string(REGEX REPLACE "\\.[^.]+$" "" _npp_dev_id "${NPP_APP_ID}")
+set(NPP_DEVELOPER_ID "${_npp_dev_id}" CACHE STRING "AppStream developer ID (reverse DNS)")
 set(NPP_EXE_NAME "notepad-plus-plus-gtk")
 # Where the port itself is published. Bug reports for the port must not go
 # to upstream's tracker, so the metainfo names a repository only when set.

@@ -288,6 +288,10 @@ from `resource.h` and the release date from the newest
 `linux/debian/changelog` entry; the test suite validates it with
 `appstreamcli validate` and the desktop file with `desktop-file-validate`
 when those tools are installed (`install-build-deps.sh` installs them).
+`<developer id>` is `NPP_DEVELOPER_ID`, by default the application ID
+without its last part (`io.github.<user>.NotepadPlusPlusGtk` gives
+`io.github.<user>`); newer `appstreamcli` releases warn
+(`developer-id-missing`) without it.
 
 ---
 

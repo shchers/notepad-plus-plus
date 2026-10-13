@@ -9,7 +9,7 @@
 
   <name>Notepad++ (GTK)</name>
   <summary>Source code editor, a native Linux port of Notepad++</summary>
-  <developer>
+  <developer id="@NPP_DEVELOPER_ID@">
     <name>Notepad++ GTK port contributors</name>
   </developer>
 
