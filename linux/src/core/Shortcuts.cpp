@@ -1,6 +1,7 @@
 #include "core/Shortcuts.h"
 
 #include "CommandTables.generated.h"
+#include "core/PortCommands.h"
 #include "platform/FileIO.h"
 
 #include <pugixml.hpp>
@@ -171,6 +172,8 @@ CommandKeys::CommandKeys()
                 ++nth;
         defaults_.push_back({d.id, nth, {d.ctrl, d.alt, d.shift, d.vk}});
     }
+    // The port's own commands (PortCommands.h); 0xC0 is VK_OEM_3, the ` key.
+    defaults_.push_back({kCmdTerminalPanel, 0, {true, false, false, 0xC0}});
     keys_ = defaults_;
 }
 

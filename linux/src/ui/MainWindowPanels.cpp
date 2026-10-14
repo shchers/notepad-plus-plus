@@ -22,6 +22,7 @@ constexpr const char* kDocMap = "documentMap";
 constexpr const char* kDocList = "documentList";
 constexpr const char* kCharPanel = "charPanel";
 constexpr const char* kClipboard = "clipboardHistory";
+constexpr const char* kTerminal = "terminal";
 const char* const kProjects[] = {"project1", "project2", "project3"};
 
 } // namespace
@@ -114,6 +115,23 @@ GtkWidget* MainWindow::buildPanels(GtkWidget* center)
     clipHistory_ = std::make_unique<ClipboardHistoryPanel>(insertText);
     dock_->add(kClipboard, panelTitle("ClipboardHistory", "Clipboard History"), clipHistory_->widget(), Area::Right);
 
+    auto documentFolder = [this] {
+        core::Buffer* b = activeBuffer();
+        return b && !b->isUntitled() ? b->path.parent_path() : fs::path();
+    };
+    terminal_ = std::make_unique<TerminalPanel>(
+        [this] { // the shell exited: close the panel, the next opening starts a new one
+            if (closing_ || !dock_->alive())
+                return;
+            const bool hadFocus = terminal_->hasFocus();
+            dock_->hide(kTerminal);
+            if (EditorView* v = activeView(); v && hadFocus)
+                gtk_widget_grab_focus(v->widget());
+        },
+        documentFolder);
+    terminal_->applyStyles(styles_);
+    dock_->add(kTerminal, "Terminal", terminal_->widget(), Area::Bottom);
+
     for (int i = 0; i < 3; ++i) {
         ProjectPanelHost ph;
         ph.openFile = [this](const fs::path& p) { openFiles({p}); };
@@ -138,6 +156,37 @@ void MainWindow::togglePanel(const char* id)
     dock_->toggle(id);
 }
 
+void MainWindow::toggleTerminal()
+{
+    if (dock_->isShown(kTerminal)) {
+        const bool hadFocus = terminal_->hasFocus();
+        dock_->hide(kTerminal);
+        if (EditorView* v = activeView(); v && hadFocus)
+            gtk_widget_grab_focus(v->widget());
+        return;
+    }
+    dock_->show(kTerminal, true);
+    terminal_->focus();
+}
+
+bool MainWindow::isTerminalKey(const GdkEventKey* ev) const
+{
+    GtkApplication* app = gtk_window_get_application(GTK_WINDOW(window_));
+    if (!app)
+        return false;
+    gchar** accels = gtk_application_get_accels_for_action(app, CommandTable::detailedName(kCmdTerminalPanel).c_str());
+    const guint mods = ev->state & gtk_accelerator_get_default_mod_mask();
+    bool match = false;
+    for (gchar** a = accels; a && *a && !match; ++a) {
+        guint key = 0;
+        GdkModifierType m = GdkModifierType(0);
+        gtk_accelerator_parse(*a, &key, &m);
+        match = key && gdk_keyval_to_lower(key) == gdk_keyval_to_lower(ev->keyval) && m == mods;
+    }
+    g_strfreev(accels);
+    return match;
+}
+
 void MainWindow::registerPanelCommands()
 {
     // View / Edit menu toggles, checked while the panel is shown.
@@ -148,6 +197,7 @@ void MainWindow::registerPanelCommands()
     };
     for (const auto& [id, panel] : toggles)
         cmds_.add(id, [this, panel = panel] { togglePanel(panel); }, [this, panel = panel] { return dock_ && dock_->isShown(panel); });
+    cmds_.add(kCmdTerminalPanel, [this] { toggleTerminal(); }, [this] { return dock_ && dock_->isShown(kTerminal); });
     // Switch to ...: show and focus (upstream Ctrl+Alt+Shift+1 ...).
     const std::pair<int, const char*> focus[] = {
         {IDM_VIEW_SWITCHTO_FUNC_LIST, kFunctionList}, {IDM_VIEW_SWITCHTO_FILEBROWSER, kFolder}, {IDM_VIEW_SWITCHTO_DOCLIST, kDocList},
@@ -200,9 +250,14 @@ void MainWindow::onPanelShown(const std::string& id, bool shown)
     }
     else if (id == kDocList)
         refreshDocList();
-    else if (id == kCharPanel)
+    else if (id == kCharPanel) {
         if (core::Buffer* b = activeBuffer())
             charPanel_->setCharset(b->encoding.bom == platform::Bom::None ? b->encoding.charset : "UTF-8");
+    } else if (id == kTerminal) {
+        // A new shell starts in the current document's folder.
+        core::Buffer* b = activeBuffer();
+        terminal_->start(b && !b->isUntitled() ? b->path.parent_path() : fs::path());
+    }
 }
 
 void MainWindow::refreshPanels()

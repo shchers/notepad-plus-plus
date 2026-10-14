@@ -40,7 +40,7 @@ set(CPACK_DEBIAN_PACKAGE_RELEASE "${NPP_DEB_REVISION}")
 set(CPACK_DEBIAN_PACKAGE_SECTION "editors")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)       # Depends: computed by dpkg-shlibdeps
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "adwaita-icon-theme, fonts-dejavu-core, librsvg2-common")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "adwaita-icon-theme, fonts-dejavu-core, librsvg2-common, libvte-2.91-0")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postrm")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)

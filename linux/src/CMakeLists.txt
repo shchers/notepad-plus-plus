@@ -58,6 +58,7 @@ add_library(nppgtk_core STATIC
   ui/MainWindowDocs.cpp
   ui/SearchResults.cpp
   ui/ShortcutDialog.cpp
+  ui/TerminalPanel.cpp
 )
 target_include_directories(nppgtk_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"

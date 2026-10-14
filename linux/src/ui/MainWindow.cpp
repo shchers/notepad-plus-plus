@@ -1107,6 +1107,10 @@ gboolean MainWindow::onKeyPress(GtkWidget* widget, GdkEventKey* ev, gpointer sel
     GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(widget));
     if (focus && GTK_IS_EDITABLE(focus))
         return gtk_window_propagate_key_event(GTK_WINDOW(widget), ev);
+    // The terminal gets the keys first too (Ctrl+C interrupts, Ctrl+Z
+    // suspends...), all but View > Terminal's own shortcut to leave it.
+    if (w->terminal_ && w->terminal_->hasFocus() && !w->isTerminalKey(ev))
+        return gtk_window_propagate_key_event(GTK_WINDOW(widget), ev);
     return FALSE;
 }
 

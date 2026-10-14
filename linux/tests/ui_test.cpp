@@ -714,6 +714,101 @@ void testTabStripScroll(GtkApplication* app, core::LanguageCatalog& langs)
     st.tabLock = false;
 }
 
+void testTerminal(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    const fs::path dir = g_dir / "terminal";
+    const fs::path other = g_dir / "terminal" / "other dir's";
+    fs::create_directories(other);
+    const fs::path doc = dir / "notes.txt";
+    writeText(doc, "notes\n");
+    auto readFile = [](const fs::path& p) {
+        std::ifstream in(p);
+        std::string line;
+        std::getline(in, line);
+        return line;
+    };
+    g_setenv("SHELL", "/bin/sh", TRUE); // no user rc files
+    Prompter p;
+    // Without VTE: the panel opens with a message, no terminal.
+    ui::TerminalPanel::setLibraryForTests("libnppgtk-no-such-vte.so");
+    {
+        auto w = makeWindow(app, langs, p);
+        CHECK(w->hasCommand(ui::kCmdTerminalPanel) && !w->commandChecked(ui::kCmdTerminalPanel));
+        CHECK(w->runCommand(ui::kCmdTerminalPanel));
+        CHECK(w->commandChecked(ui::kCmdTerminalPanel) && w->dock().isShown("terminal"));
+        CHECK(!w->terminal().hasTerminal() && !w->terminal().running());
+        CHECK(w->runCommand(ui::kCmdTerminalPanel) && !w->dock().isShown("terminal"));
+    }
+    ui::TerminalPanel::setLibraryForTests("libvte-2.91.so.0");
+    if (!ui::TerminalPanel::available()) {
+        std::printf("  (VTE not installed: terminal not tested)\n");
+        return;
+    }
+    auto w = makeWindow(app, langs, p);
+    ui::TerminalPanel& term = w->terminal();
+    // The default shortcut, Ctrl+`.
+    GdkEventKey key{};
+    key.type = GDK_KEY_PRESS;
+    key.keyval = GDK_KEY_grave;
+    key.state = GDK_CONTROL_MASK;
+    CHECK(w->isTerminalKey(&key));
+    key.state = 0;
+    CHECK(!w->isTerminalKey(&key));
+    // Opening it starts a shell in the current document's folder, focused.
+    CHECK(w->openFiles({doc}) == 1);
+    CHECK(w->runCommand(ui::kCmdTerminalPanel));
+    CHECK(term.hasTerminal());
+    CHECK(waitFor([&] { return term.running() && term.hasFocus(); }));
+    term.type("pwd > out1.txt\r");
+    CHECK(waitFor([&] { return readFile(dir / "out1.txt") == dir.string(); }));
+    // Go to Current Document's Folder, quoting the path for the shell.
+    term.changeDirectory(other);
+    term.type("pwd > out2.txt\r");
+    CHECK(waitFor([&] { return readFile(other / "out2.txt") == other.string(); }));
+    // Keys go to the shell first: Ctrl+N is not File > New while it has focus.
+    const std::size_t tabs = w->tabCount(ui::MainWindow::kMainView);
+    auto press = [&](guint keyval, GdkModifierType mods) {
+        GdkEvent* ev = gdk_event_new(GDK_KEY_PRESS);
+        GtkWidget* top = gtk_widget_get_toplevel(term.widget());
+        ev->key.window = GDK_WINDOW(g_object_ref(gtk_widget_get_window(top)));
+        ev->key.keyval = keyval;
+        ev->key.state = mods;
+        GdkKeymapKey* keys = nullptr;
+        gint n = 0;
+        if (gdk_keymap_get_entries_for_keyval(gdk_keymap_get_for_display(gdk_display_get_default()), keyval, &keys, &n) && n > 0)
+            ev->key.hardware_keycode = static_cast<guint16>(keys[0].keycode);
+        g_free(keys);
+        gdk_event_set_device(ev, gdk_seat_get_keyboard(gdk_display_get_default_seat(gdk_display_get_default())));
+        gtk_widget_event(top, ev);
+        gdk_event_free(ev);
+        pump();
+    };
+    press(GDK_KEY_n, GDK_CONTROL_MASK);
+    CHECK(w->tabCount(ui::MainWindow::kMainView) == tabs);
+    term.type("\r"); // sh has no line editing: ^N stays on the line
+    // Ctrl+` leaves it: the panel closes, the editor has the focus again.
+    press(GDK_KEY_grave, GDK_CONTROL_MASK);
+    CHECK(!w->dock().isShown("terminal") && term.running());
+    CHECK(gtk_widget_is_focus(w->activeView()->widget()));
+    // Opened again: the same shell, still in its directory.
+    CHECK(w->runCommand(ui::kCmdTerminalPanel));
+    CHECK(waitFor([&] { return term.hasFocus(); }));
+    term.type("pwd > out3.txt\r");
+    CHECK(waitFor([&] { return readFile(other / "out3.txt") == other.string(); }));
+    // `exit` closes the panel; opening it again starts a new shell.
+    term.type("exit\r");
+    CHECK(waitFor([&] { return !term.running() && !w->dock().isShown("terminal"); }));
+    CHECK(w->runCommand(ui::kCmdTerminalPanel));
+    CHECK(waitFor([&] { return term.running(); }));
+    term.type("pwd > out4.txt\r");
+    CHECK(waitFor([&] { return readFile(dir / "out4.txt") == dir.string(); }));
+    // Closing the window with the shell running.
+    gtk_window_close(GTK_WINDOW(gtk_widget_get_toplevel(term.widget())));
+    pump();
+    w.reset();
+    pump();
+}
+
 void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
 {
     Prompter p;
@@ -940,6 +1035,8 @@ int main(int argc, char** argv)
     testPanels(app, langs);
     std::printf("localization and shortcuts...\n");
     testLocalizationAndShortcuts(app, langs);
+    std::printf("terminal...\n");
+    testTerminal(app, langs);
     std::printf("close with panels...\n");
     testCloseWithPanels(app, langs);
 

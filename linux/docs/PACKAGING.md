@@ -52,8 +52,10 @@ GLib, Pango, Cairo, ATK, GDK-Pixbuf, libstdc++ and libc. Scintilla, Lexilla,
 Boost.Regex, pugixml and uchardet are linked statically, as on Windows,
 because Notepad++ ships modified copies of them.
 
-`Recommends:` adds `adwaita-icon-theme`, `fonts-dejavu-core` and
-`librsvg2-common` (toolbar icons and a good default monospace font).
+`Recommends:` adds `adwaita-icon-theme`, `fonts-dejavu-core`,
+`librsvg2-common` (toolbar icons and a good default monospace font) and
+`libvte-2.91-0`, which the Terminal panel loads at run time (VTE is not a
+build dependency; without it the panel says what to install).
 
 ---
 

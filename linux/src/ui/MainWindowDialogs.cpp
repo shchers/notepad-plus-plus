@@ -376,6 +376,7 @@ void MainWindow::restyleAll()
     for (core::Buffer* b : buffers())
         reapplyLanguage(*b);
     results_->applyStyles(styles_);
+    terminal_->applyStyles(styles_);
     panelSource_ = nullptr; // the Document Map takes the new styles
     refreshPanels();
     notifyPlugins(NPPN_WORDSTYLESUPDATED, activeBuffer());

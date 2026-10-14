@@ -28,6 +28,7 @@
 #include "core/FunctionParser.h"
 #include "ui/CharPanel.h"
 #include "ui/ClipboardHistoryPanel.h"
+#include "ui/TerminalPanel.h"
 #include "ui/Commands.h"
 #include "ui/DockManager.h"
 #include "ui/DocListPanel.h"
@@ -175,6 +176,10 @@ public:
     DocListPanel& documentList() { return *docList_; }
     CharPanel& charPanel() { return *charPanel_; }
     ClipboardHistoryPanel& clipboardHistory() { return *clipHistory_; }
+    TerminalPanel& terminal() { return *terminal_; }
+    // Whether `ev` is a shortcut of View > Terminal, the one key the
+    // terminal does not get first.
+    bool isTerminalKey(const GdkEventKey* ev) const;
     ProjectPanel& projectPanel(int n) { return *projects_[static_cast<std::size_t>(n - 1)]; }
     // Panel IDs as in the dock: "functionList", "folderAsWorkspace", ...
     // A plugin's panel is "plugin:<module>:<dlgID>".
@@ -429,6 +434,7 @@ private:
     void restorePanels();           // docking layout, workspaces (settings)
     void savePanels();
     void togglePanel(const char* id);
+    void toggleTerminal();
     void findInProjects(const std::vector<std::filesystem::path>& files);
 
     // Signal trampolines
@@ -477,6 +483,7 @@ private:
     std::unique_ptr<DocListPanel> docList_;
     std::unique_ptr<CharPanel> charPanel_;
     std::unique_ptr<ClipboardHistoryPanel> clipHistory_;
+    std::unique_ptr<TerminalPanel> terminal_;
     std::array<std::unique_ptr<ProjectPanel>, 3> projects_;
     const EditorView* panelSource_ = nullptr; // what the document panels show
     std::string panelKey_;                    // document + language the Function List shows

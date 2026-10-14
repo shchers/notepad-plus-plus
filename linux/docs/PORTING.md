@@ -160,7 +160,7 @@ flowchart TB
     subgraph port["linux/src — the port"]
         CORE["core/ — UI-free model<br/>LanguageCatalog · StyleCatalog · LexerSetup · UserLanguage<br/>Buffer · FileManager · Session · RecentFiles · NppConfig<br/>SearchEngine · FileSearch · EditOps · Shortcuts · Macro · Translator<br/>FunctionParser · Workspace"]
         PLAT["platform/ — OS services<br/>Paths (XDG) · TextCodec (uchardet+iconv) · Settings<br/>FileIO (GIO) · FileMonitor (inotify)"]
-        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator<br/>DockManager · Function List · Folder as Workspace · Document Map · Document List<br/>Character Panel · Clipboard History · Project Panels<br/>PluginManager · plugin messages (SendMessageW)"]
+        UI["ui/ — GTK 3<br/>EditorView · MainWindow (two views) · Commands (menus, keys)<br/>FindDialog · SearchResults · FindBar · Shortcut Mapper · Preferences · Style Configurator<br/>DockManager · Function List · Folder as Workspace · Document Map · Document List<br/>Character Panel · Clipboard History · Project Panels · Terminal<br/>PluginManager · plugin messages (SendMessageW)"]
         MAIN["main.cpp — CLI, single instance (D-Bus)"]
     end
     DATA --> CORE
@@ -440,7 +440,7 @@ on its own.
 | UDL editor ("Define your language…"), Find Characters in Range, Hide Lines, synchronized scrolling, Monitoring (tail -f), text direction | ❌ later (see Phase 3 "left for later") |
 | Encoding ▸ ANSI | ➖ left out: "ANSI" is the system code page, UTF-8 on Linux, where upstream does nothing for it; Character Set covers legacy encodings |
 | Auto-completion, call tips, smart highlighting, tag matching | ✅ `core/EditorFeatures`, after upstream's `AutoCompletion`, `FunctionCallTip`, `SmartHighlighter`, `xmlMatchedTagsHighlighter` with its `autoCompletion/*.xml`; also auto-insert of pairs and close tags, advanced auto-indent, clickable links, Ctrl+double-click delimiter selection (Phase 1 would replace them with upstream's own code) |
-| Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom |
+| Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom; Terminal (port-only, View > Terminal, Ctrl+`: the user's shell in VTE, loaded at run time; starts in the current document's folder, keys go to the shell first, Ctrl+Shift+C/V, context menu with "Go to Current Document's Folder", `exit` closes the panel, editor colours and font; without VTE the panel names the package to install) |
 | Plugins | ✅ upstream's plugin interface, rebuilt from source against the SDK in `linux/sdk` (§7, `docs/PLUGINS.md`): entry points, `NPPM_*` messages with upstream's return values, `NPPN_*` and forwarded `SCN_*` notifications, Plugins menu with check marks, default and `shortcuts.xml` keys, toolbar buttons, docked panels (GTK widgets) restored at start, `NPPM_MSGTOPLUGIN`, `SendMessage` from worker threads, `-noPlugin`, `-pluginMessage=`; Plugins Admin (installed and deactivated plugins, install from `.so`/`.zip`, remove, deactivate) and Import plugin(s); sample plugin, pkg-config file, `-dev` package |
 
 ---
@@ -726,7 +726,9 @@ one-line upstream PR:
   (new document defaults, margins, edge); the panels (Function List tree,
   sort, filter, opening a function, re-parse after edits; Document Map
   zone and scrolling, detaching when its document closes; Document List;
-  Character Panel code pages and HTML forms; Clipboard History; Folder as
+  Character Panel code pages and HTML forms; Clipboard History; Terminal
+  (shell in the document's folder, keys to the shell, Ctrl+` in and out,
+  `exit`, the message without VTE); Folder as
   Workspace listing, locate, refresh on disk changes, session round trip;
   Project Panel editing, saving, reopening, the exit prompt, Find in
   Projects; docking moves, floating, and the layout restored in a new

@@ -19,7 +19,7 @@ Rules-Requires-Root: no
 Package: notepad-plus-plus-gtk
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: adwaita-icon-theme, fonts-dejavu-core, librsvg2-common
+Recommends: adwaita-icon-theme, fonts-dejavu-core, librsvg2-common, libvte-2.91-0
 Description: Notepad++ source code editor - native GTK 3 port (preview)
  Unofficial native Linux build of the Notepad++ source tree using the GTK 3
  backend of Scintilla. This preview provides tabbed editing in two views,
@@ -28,7 +28,8 @@ Description: Notepad++ source code editor - native GTK 3 port (preview)
  detection, the Find / Replace / Find in Files / Mark dialog with Boost
  regex and a search results panel, macros, Run commands, the Shortcut Mapper,
  Preferences, Notepad++ translations, printing, docking panels (Function
- List, Folder as Workspace, Document Map, Project Panels and others),
+ List, Folder as Workspace, Document Map, Project Panels, a terminal and
+ others),
  sessions with snapshots of
  unsaved documents, recent files, detection of outside file changes, and a
  single-instance mode compatible with Notepad++ switches. Notepad++'s

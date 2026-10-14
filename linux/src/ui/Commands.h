@@ -5,6 +5,7 @@
 // to the same numbers as Notepad++ on Windows.
 #pragma once
 
+#include "core/PortCommands.h"
 #include "core/Shortcuts.h"
 #include "core/Translator.h"
 
@@ -17,8 +18,8 @@
 
 namespace npp::ui {
 
-// Port commands without an upstream counterpart (beyond upstream's ranges).
-inline constexpr int kCmdImportConfig = 49501;
+using core::kCmdImportConfig;
+using core::kCmdTerminalPanel;
 
 class CommandTable {
 public:

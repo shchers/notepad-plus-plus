@@ -52,7 +52,7 @@ semantics and its search results panel, incremental search, the Edit menu's
 line, case and blank operations, the Column Editor, macros and Run commands,
 the Shortcut Mapper, Preferences, all Notepad++ translations, printing,
 docking panels (Function List, Folder as Workspace, Document Map, Document
-List, Character Panel, Clipboard History, Project Panels),
+List, Character Panel, Clipboard History, Project Panels, a terminal),
 folding, bookmarks, sessions in Notepad++'s `session.xml` format with
 snapshots of unsaved documents, recent files, backup on save, detection of
 files changed outside the editor and a single running instance. Notepad++'s

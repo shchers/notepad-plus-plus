@@ -1369,6 +1369,7 @@ void MainWindow::cmdSetTheme(const std::string& theme)
     settings_.theme = theme;
     loadStyles();
     results_->applyStyles(styles_);
+    terminal_->applyStyles(styles_);
     panelSource_ = nullptr; // the Document Map takes the new styles
     refreshPanels();
     for (core::Buffer* b : buffers())

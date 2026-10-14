@@ -26,6 +26,7 @@ RUN apt-get update \
         libgtk-3-dev \
         dpkg-dev file \
         xvfb xauth dbus \
+        libvte-2.91-0 \
         appstream desktop-file-utils \
         ca-certificates \
  && rm -rf /var/lib/apt/lists/*
@@ -65,7 +66,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 COPY --from=build /build/pkg/*.deb /tmp/pkg/
 RUN apt-get update \
  && apt-get install -y --no-install-recommends /tmp/pkg/*.deb \
-        adwaita-icon-theme fonts-dejavu-core librsvg2-common \
+        adwaita-icon-theme fonts-dejavu-core librsvg2-common libvte-2.91-0 \
  && rm -rf /var/lib/apt/lists/* /tmp/pkg \
  && notepad-plus-plus-gtk --version \
  && useradd --create-home --shell /bin/bash npp

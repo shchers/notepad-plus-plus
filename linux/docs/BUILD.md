@@ -211,6 +211,10 @@ unset `DISPLAY` so CTest uses `xvfb-run`.
 **Toolbar icons missing / `Could not load a pixbuf ... .svg`**: install
 `adwaita-icon-theme librsvg2-common` (the `.deb` recommends both).
 
+**View > Terminal only shows "The terminal needs the VTE library"**: install
+VTE for GTK 3 (`libvte-2.91-0` on Debian and Ubuntu, `vte291` on Fedora,
+`vte3` on Arch). It is loaded at run time, so no rebuild is needed.
+
 **Dark themes keep a light window frame**: the GTK chrome follows the editor
 theme via `gtk-application-prefer-dark-theme`. Your GTK theme needs a dark
 variant (Adwaita and Yaru have one); a theme name pointing at a theme that
