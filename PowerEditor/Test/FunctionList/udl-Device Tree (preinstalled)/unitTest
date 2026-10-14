@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Function List unit test for the Device Tree UDL.
+ * A brace in a comment must not count: {
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/memreserve/ 0x80000000 0x00100000;
+
+/ {
+	model = "Example board";
+	compatible = "vendor,board", "vendor,soc";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x40000000>;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			compatible = "arm,cortex-a53";
+			reg = <0>;
+		};
+	};
+
+	soc: soc@0 {
+		compatible = "simple-bus";
+		ranges;
+
+		/* uart1: serial@1000 { disabled }; */
+		uart0: serial@10000000 {
+			compatible = "ns16550a";
+			reg = <0x10000000 0x100>;
+			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		gpio: gpio@20000000 {
+			compatible = "vendor,gpio";
+			reg = <0x20000000 0x1000>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "vendor,bt";
+		enable-gpios = <&gpio 3 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&{/soc@0/gpio@20000000} {
+	led_hog: led-hog {
+		gpio-hog;
+		gpios = <5 GPIO_ACTIVE_LOW>;
+		output-high;
+	};
+};
+
+/delete-node/ &cpu0;

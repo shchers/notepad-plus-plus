@@ -127,6 +127,8 @@
 			If "My UDL Name" doesn't exist yet, you can create it via UDL dialog.
 		-->
 			<!-- ==================== User Defined Languages ============================ -->
+			<association id= "devicetree.xml"		userDefinedLangName="Device Tree (preinstalled)"/>
+			<association id= "devicetree.xml"		userDefinedLangName="Device Tree (preinstalled dark mode)"/>
 			<association id= "krl.xml"				userDefinedLangName="KRL"/>
 			<association id= "nppexec.xml"			userDefinedLangName="NppExec"/>
 			<association id= "sinumerik.xml"		userDefinedLangName="Sinumerik"/>

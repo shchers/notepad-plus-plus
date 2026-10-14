@@ -107,6 +107,10 @@ Function copyCommonFiles
 	File "..\bin\userDefineLangs\markdown._preinstalled.udl.xml"
 	File "..\bin\userDefineLangs\markdown._preinstalled_DM.udl.xml"
 
+	; Device Tree in user defined languages
+	File "..\bin\userDefineLangs\devicetree._preinstalled.udl.xml"
+	File "..\bin\userDefineLangs\devicetree._preinstalled_DM.udl.xml"
+
 	; Localization
 	; Default language English 
 	SetOutPath "$INSTDIR\localization\"

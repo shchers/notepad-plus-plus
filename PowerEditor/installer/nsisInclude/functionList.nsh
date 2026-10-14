@@ -253,6 +253,11 @@ SectionGroup "Function List Files" functionListComponent
 		File ".\functionList\d.xml"
 	${MementoSectionEnd}
 
+	${MementoSection} "Device Tree" DEVICETREE_FL
+		SetOutPath "$INSTDIR\functionList"
+		File ".\functionList\devicetree.xml"
+	${MementoSectionEnd}
+
 	SetOverwrite off
 	${MementoSection} "Override Map" OverrideMap_FL
 		SetOutPath "$INSTDIR\functionList"
@@ -453,6 +458,10 @@ SectionGroup un.functionListComponent
 
 	Section un.D_FL
 		Delete "$INSTDIR\functionList\d.xml"
+	SectionEnd
+
+	Section un.DEVICETREE_FL
+		Delete "$INSTDIR\functionList\devicetree.xml"
 	SectionEnd
 
 SectionGroupEnd

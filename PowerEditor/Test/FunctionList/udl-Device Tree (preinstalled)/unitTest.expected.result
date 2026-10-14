@@ -1,0 +1,1 @@
+{"nodes":[{"leaves":["chosen","memory@80000000","cpus","cpu@0","soc@0","serial@10000000","gpio@20000000"],"name":"/"},{"leaves":["bluetooth"],"name":"&uart0"},{"leaves":["led-hog"],"name":"&{/soc@0/gpio@20000000}"}],"root":"unitTest"}

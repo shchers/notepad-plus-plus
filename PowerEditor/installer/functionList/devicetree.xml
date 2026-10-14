@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- ==========================================================================\
+|
+|   To learn how to make your own language parser, please check the following
+|   link:
+|       https://npp-user-manual.org/docs/function-list/
+|
+\=========================================================================== -->
+<NotepadPlus>
+	<functionList>
+		<!-- ================================================= [ Device Tree ] -->
+		<!-- Devicetree source (.dts, .dtsi, .dtso), for the "Device Tree"     -->
+		<!-- User Defined Language. Top-level blocks ("/", "&label",           -->
+		<!-- "&{/path}") are the classes, the nodes inside them at any depth   -->
+		<!-- the functions. The <function> outside <classRange> makes it a     -->
+		<!-- mixed parser, which skips braces in comments.                     -->
+
+		<parser
+			displayName="Device Tree"
+			id         ="devicetree_node"
+			commentExpr="(?s:/\*.*?\*/)|(?m-s://.*?$)"
+		>
+			<classRange
+				mainExpr="(?x)                                                         # use inline comments
+					^[\t\x20]*                                                         # leading whitespace
+					([A-Za-z_][\w\-]*[\t\x20]*:[\t\x20]*)*                             # labels
+					(/|&amp;\{[^}\r\n]*\}|&amp;[A-Za-z_][\w\-]*)                       # root, path or label reference
+					[\t\x20]*\{                                                        # block
+				"
+				openSymbole ="\{"
+				closeSymbole="\}"
+			>
+				<className>
+					<nameExpr expr="(/|&amp;\{[^}\r\n]*\}|&amp;[A-Za-z_][\w\-]*)[\t\x20]*\{" />
+					<nameExpr expr="(&amp;\{[^}\r\n]*\}|[^\t\x20{]+)" />
+				</className>
+				<function
+					mainExpr="(?x)                                                     # use inline comments
+						^[\t\x20]*                                                     # leading whitespace
+						([A-Za-z_][\w\-]*[\t\x20]*:[\t\x20]*)*                         # labels
+						[A-Za-z_][\w,.+\-]*(@[\w,.+\-]*)?                              # node-name@unit-address
+						[\t\x20]*\{                                                    # block
+					"
+				>
+					<functionName>
+						<funcNameExpr expr="[A-Za-z_][\w,.+\-]*(@[\w,.+\-]*)?[\t\x20]*\{" />
+						<funcNameExpr expr="[^\t\x20{]+" />
+					</functionName>
+				</function>
+			</classRange>
+			<function
+				mainExpr="(?x)                                                     # use inline comments
+					^[\t\x20]*                                                     # leading whitespace
+					([A-Za-z_][\w\-]*[\t\x20]*:[\t\x20]*)*                         # labels
+					[A-Za-z_][\w,.+\-]*(@[\w,.+\-]*)?                              # node-name@unit-address
+					[\t\x20]*\{                                                    # block
+				"
+			>
+				<functionName>
+					<nameExpr expr="[A-Za-z_][\w,.+\-]*(@[\w,.+\-]*)?[\t\x20]*\{" />
+					<nameExpr expr="[^\t\x20{]+" />
+				</functionName>
+			</function>
+		</parser>
+	</functionList>
+</NotepadPlus>

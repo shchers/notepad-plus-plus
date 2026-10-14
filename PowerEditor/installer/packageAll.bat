@@ -327,6 +327,20 @@ If ErrorLevel 1 goto End
 copy /Y "..\bin\userDefineLangs\markdown._preinstalled_DM.udl.xml" .\zipped.package.releaseArm64\userDefineLangs\
 If ErrorLevel 1 goto End
 
+rem Device Tree as UserDefineLanguge: Device Tree syntax highlighter into Notepad++ 32-bit/64-bit package folders
+copy /Y "..\bin\userDefineLangs\devicetree._preinstalled.udl.xml" .\zipped.package.release\userDefineLangs\
+If ErrorLevel 1 goto End
+copy /Y "..\bin\userDefineLangs\devicetree._preinstalled.udl.xml" .\zipped.package.release64\userDefineLangs\
+If ErrorLevel 1 goto End
+copy /Y "..\bin\userDefineLangs\devicetree._preinstalled.udl.xml" .\zipped.package.releaseArm64\userDefineLangs\
+If ErrorLevel 1 goto End
+copy /Y "..\bin\userDefineLangs\devicetree._preinstalled_DM.udl.xml" .\zipped.package.release\userDefineLangs\
+If ErrorLevel 1 goto End
+copy /Y "..\bin\userDefineLangs\devicetree._preinstalled_DM.udl.xml" .\zipped.package.release64\userDefineLangs\
+If ErrorLevel 1 goto End
+copy /Y "..\bin\userDefineLangs\devicetree._preinstalled_DM.udl.xml" .\zipped.package.releaseArm64\userDefineLangs\
+If ErrorLevel 1 goto End
+
 rem theme: Copy all files into Notepad++ 32-bit/64-bit package folders
 copy /Y ".\themes\*.xml" .\zipped.package.release\themes\
 If ErrorLevel 1 goto End
