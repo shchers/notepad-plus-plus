@@ -35,6 +35,9 @@ public:
 
     DockManager(GtkWindow* main, GtkWidget* center);
     ~DockManager();
+    // False once the main window has destroyed the docked widgets (it does
+    // so before the dock goes): their layout can no longer be read.
+    bool alive() const { return !gone_; }
     DockManager(const DockManager&) = delete;
     DockManager& operator=(const DockManager&) = delete;
 
@@ -104,6 +107,7 @@ private:
     std::array<std::string, 5> menuLabels_{"Dock to Left", "Dock to Right", "Dock to Top", "Dock to Bottom", "Float"};
     std::string closeLabel_ = "Close";
     bool restoring_ = false;
+    bool gone_ = false; // the main window destroyed the docked widgets
     std::map<std::string, std::string> pending_; // saved state of panels not added yet
 };
 

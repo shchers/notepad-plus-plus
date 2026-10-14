@@ -20,8 +20,11 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace npp;
@@ -781,6 +784,42 @@ void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
     w2->dock().moveTo("charPanel", ui::DockManager::Area::Right);
 }
 
+void testCloseWithPanels(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    // Closing the window as the user does (delete-event, then GTK destroys
+    // it, then the MainWindow goes) touches no destroyed panel widget, and
+    // the layout saved on close keeps the panels' tab order.
+    int criticals = 0;
+    auto count = +[](const gchar*, GLogLevelFlags, const gchar* msg, gpointer n) {
+        ++*static_cast<int*>(n);
+        std::fprintf(stderr, "unexpected: %s\n", msg);
+    };
+    std::vector<std::pair<const char*, guint>> handlers;
+    for (const char* domain : {"Gtk", "GLib-GObject", "GLib", "Gdk"})
+        handlers.emplace_back(domain, g_log_set_handler(domain, GLogLevelFlags(G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING), count, &criticals));
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    for (int id : {IDM_VIEW_FUNC_LIST, IDM_VIEW_DOC_MAP, IDM_VIEW_DOCLIST, IDM_EDIT_CHAR_PANEL})
+        if (!w->commandChecked(id))
+            CHECK(w->runCommand(id));
+    w->dock().moveTo("charPanel", ui::DockManager::Area::Float);
+    pump();
+    gtk_window_close(w->window());
+    pump();
+    const std::map<std::string, std::string> saved = w->settings().docking;
+    w.reset();
+    pump();
+    for (const auto& [domain, id] : handlers)
+        g_log_remove_handler(domain, id);
+    CHECK(criticals == 0);
+    // "area,shown,page,...": shown, with a real page number.
+    for (const char* id : {"functionList", "documentMap", "documentList"}) {
+        int area = -1, shown = -1, page = -1;
+        auto it = saved.find(id);
+        CHECK(it != saved.end() && std::sscanf(it->second.c_str(), "%d,%d,%d", &area, &shown, &page) == 3 && shown == 1 && page >= 0);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -819,6 +858,8 @@ int main(int argc, char** argv)
     testPanels(app, langs);
     std::printf("localization and shortcuts...\n");
     testLocalizationAndShortcuts(app, langs);
+    std::printf("close with panels...\n");
+    testCloseWithPanels(app, langs);
 
     g_object_unref(app);
     std::error_code ec;

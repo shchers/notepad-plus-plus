@@ -38,6 +38,17 @@ DockManager::DockManager(GtkWindow* main, GtkWidget* center) : main_(main)
     panes_[idx(Area::Bottom)] = paneB;
     root_ = paneL;
     g_object_ref_sink(root_);
+    // Destroying the main window destroys the docked notebooks too, which
+    // drop their pages one by one: stop reacting before the panels' widgets
+    // go (and disconnect while the notebooks and panes still exist).
+    g_signal_connect(root_, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer self) {
+                         auto* d = static_cast<DockManager*>(self);
+                         d->gone_ = true;
+                         for (GtkWidget* w : d->sides_)
+                             g_signal_handlers_disconnect_by_data(w, d);
+                         for (GtkWidget* w : d->panes_)
+                             g_signal_handlers_disconnect_by_data(w, d);
+                     }), this);
 
     for (int a = 0; a < 4; ++a) {
         GtkWidget* pane = panes_[a];
@@ -72,13 +83,18 @@ DockManager::DockManager(GtkWindow* main, GtkWidget* center) : main_(main)
 
 DockManager::~DockManager()
 {
-    for (GtkWidget* nb : floating_)
+    for (GtkWidget* nb : floating_) {
+        g_signal_handlers_disconnect_by_data(nb, this); // its pages go with it
         if (GtkWidget* win = floatingWindow(nb))
             gtk_widget_destroy(win);
-    for (GtkWidget* nb : sides_)
-        g_signal_handlers_disconnect_by_data(nb, this);
-    for (GtkWidget* p : panes_)
-        g_signal_handlers_disconnect_by_data(p, this);
+    }
+    if (!gone_) {
+        g_signal_handlers_disconnect_by_data(root_, this);
+        for (GtkWidget* nb : sides_)
+            g_signal_handlers_disconnect_by_data(nb, this);
+        for (GtkWidget* p : panes_)
+            g_signal_handlers_disconnect_by_data(p, this);
+    }
     gtk_widget_destroy(root_);
     g_object_unref(root_);
 }

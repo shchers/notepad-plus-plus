@@ -301,7 +301,7 @@ void MainWindow::restorePanels()
 
 void MainWindow::savePanels()
 {
-    if (!dock_)
+    if (!dock_ || !dock_->alive())
         return;
     settings_.docking = dock_->saveState();
     for (std::size_t i = 0; i < projects_.size(); ++i)
