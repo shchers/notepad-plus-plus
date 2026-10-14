@@ -284,6 +284,13 @@ order: a UDL's extensions (the dark or light variant matching the theme),
 then the Style Configurator's "User ext.", then the built-in languages.
 Sessions store a UDL by name, as upstream.
 
+**Device Tree** (`.dts`, `.dtsi`, `.dtso`): upstream has no lexer for it.
+The UDL (`userDefineLangs/devicetree._preinstalled*.udl.xml`, light and
+dark) and its Function List rules (`functionList/devicetree.xml`,
+associated in `overrideMap.xml`) were added to the upstream tree, like the
+preinstalled Markdown, so the port only reads them. The `.desktop` file
+claims `text/x-devicetree-source`.
+
 **Docking panels** (`ui/DockManager`, Phase 4): see §2.2 for the choice.
 Each side shows its panels as notebook pages with upstream's caption bar
 (title, a menu to dock to another side or float, close) and tabs underneath
@@ -304,7 +311,7 @@ nested class scans are the same code paths with the same Boost regex flags.
 Rules are upstream's `functionList/*.xml` with `overrideMap.xml`
 (language IDs map onto the generated language table, which is in
 `LangType` order); the user's `functionList/` folder overrides the shipped
-one. The 42 fixtures of upstream's own unit test
+one. The 43 fixtures of upstream's own unit test
 (`PowerEditor/Test/FunctionList`) run in the test suite and produce
 exactly upstream's expected JSON.
 
@@ -700,7 +707,7 @@ one-line upstream PR:
   kinds, trim, TAB/space, empty and duplicate lines, join, comments,
   bookmarked lines), column insertion, Style Configurator saving, and UDL
   parsing (current and pre-2.0 formats, keyword encoding).
-- `panels`: Function List parsing on the 42 fixtures of upstream's own
+- `panels`: Function List parsing on the 43 fixtures of upstream's own
   Function List unit test (`PowerEditor/Test/FunctionList`, checked out
   with CRLF line endings as upstream's Windows CI sees them, with its
   test-only `filesForTesting` rules), compared with upstream's expected
@@ -714,7 +721,8 @@ one-line upstream PR:
   search; macro recording (typing, menu commands, searches, no double
   recording), playback, until end of file, saving to `shortcuts.xml` and
   shortcuts for saved macros; Run variables and commands; UDL detection and
-  highlighting (Markdown), Language menu, sessions; Preferences effects
+  highlighting (Markdown; Device Tree styles and folding after a block
+  comment), Language menu, sessions; Preferences effects
   (new document defaults, margins, edge); the panels (Function List tree,
   sort, filter, opening a function, re-parse after edits; Document Map
   zone and scrolling, detaching when its document closes; Document List;

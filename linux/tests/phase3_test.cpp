@@ -526,7 +526,7 @@ void testStyleCatalogSave()
 void testUserLanguages()
 {
     const auto udls = core::loadAllUserLanguages(g_dir / "no-config", {fs::path(NPP_TEST_DATA_DIR) / "userDefineLangs"});
-    CHECK(udls.size() == 2);
+    CHECK(udls.size() == 4); // Markdown and Device Tree, light and dark
     const core::UserLanguage* md = nullptr;
     for (const auto& u : udls)
         if (u.name == "Markdown (preinstalled)")
@@ -567,6 +567,32 @@ void testUserLanguages()
         CHECK(old[0].keywordLists[SCE_USER_KWLIST_DELIMITERS].rfind("00\"", 0) == 0);
         CHECK(old[0].keywordLists[SCE_USER_KWLIST_COMMENTS] == "03// 04 01 02");
         CHECK(old[0].styles[SCE_USER_STYLE_KEYWORD1].fg == 0x0000FFu);
+    }
+
+    // Comments do not move the later fold levels a line (fixed in
+    // lexilla/lexers/LexUser.cxx): a block comment closing at an LF line end
+    // (counted twice), a line comment ending at ((EOL)) (not counted).
+    writeText(g_dir / "udl" / "braces.xml",
+              "<NotepadPlus><UserLang name=\"Braces\" ext=\"br\" udlVersion=\"2.1\"><Settings /><Styles /><KeywordLists>"
+              "<Keywords name=\"Comments\">00// 01 02((EOL)) 03/* 04*/</Keywords>"
+              "<Keywords name=\"Folders in code1, open\">{</Keywords>"
+              "<Keywords name=\"Folders in code1, close\">}</Keywords>"
+              "</KeywordLists></UserLang></NotepadPlus>");
+    const auto braces = core::loadUserLanguages(g_dir / "udl" / "braces.xml");
+    CHECK(braces.size() == 1);
+    if (braces.size() == 1) {
+        const core::StyleCatalog styles;
+        for (const char* eol : {"\n", "\r\n"}) {
+            ui::EditorView v;
+            std::string text;
+            for (const char* line : {"/* one */", "a {", "/*", " * two", " */", "// three", "b {", "}", "}"})
+                text += std::string(line) + eol;
+            v.setText(text);
+            v.applyUserLanguage(braces[0], styles, 1);
+            auto header = [&](int line) { return (v.execute(SCI_GETFOLDLEVEL, static_cast<uptr_t>(line)) & SC_FOLDLEVELHEADERFLAG) != 0; };
+            CHECK(header(1) && !header(2) && !header(5) && header(6) && !header(7));
+            CHECK((v.execute(SCI_GETFOLDLEVEL, 8) & SC_FOLDLEVELNUMBERMASK) == SC_FOLDLEVELBASE + 1);
+        }
     }
 }
 

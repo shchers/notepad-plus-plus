@@ -10,7 +10,7 @@ StartupNotify=true
 StartupWMClass=@NPP_EXE_NAME@
 Categories=Development;TextEditor;
 Keywords=text;editor;code;notepad;scintilla;
-MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-csharp;text/x-java;text/x-python;text/x-python3;text/x-shellscript;text/x-makefile;text/x-cmake;text/x-perl;text/x-php;text/x-ruby;text/x-go;text/rust;text/x-lua;text/x-sql;text/x-tex;text/x-diff;text/x-patch;text/markdown;text/css;text/html;text/xml;application/xml;application/json;application/javascript;application/x-yaml;application/toml;application/x-desktop;text/x-log;
+MimeType=text/plain;text/x-devicetree-source;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-csharp;text/x-java;text/x-python;text/x-python3;text/x-shellscript;text/x-makefile;text/x-cmake;text/x-perl;text/x-php;text/x-ruby;text/x-go;text/rust;text/x-lua;text/x-sql;text/x-tex;text/x-diff;text/x-patch;text/markdown;text/css;text/html;text/xml;application/xml;application/json;application/javascript;application/x-yaml;application/toml;application/x-desktop;text/x-log;
 Actions=new-window;
 
 [Desktop Action new-window]

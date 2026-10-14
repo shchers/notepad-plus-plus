@@ -505,7 +505,7 @@ void testUserDefinedLanguages(GtkApplication* app, core::LanguageCatalog& langs)
 {
     Prompter p;
     auto w = makeWindow(app, langs, p);
-    CHECK(w->userLanguages().size() == 2);
+    CHECK(w->userLanguages().size() == 4); // Markdown and Device Tree, light and dark
     const fs::path md = g_dir / "readme.md";
     writeText(md, "# Title\nplain **bold** text\n");
     CHECK(w->openFiles({md}) == 1);
@@ -532,6 +532,52 @@ void testUserDefinedLanguages(GtkApplication* app, core::LanguageCatalog& langs)
         if (f.filename == md.string())
             found = f.lang == "Markdown (preinstalled)";
     CHECK(found);
+}
+
+void testDeviceTree(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    const std::string text = "// SPDX-License-Identifier: GPL-2.0\n"
+                             "/dts-v1/;\n"
+                             "#include <dt-bindings/gpio/gpio.h>\n"
+                             "/* board */\n"
+                             "/ {\n"
+                             "\tmodel = \"Board\";\n"
+                             "\t#address-cells = <1>;\n"
+                             "\tuart0: serial@1000 {\n"
+                             "\t\treg = <0x1000 0x100>;\n"
+                             "\t\tgpios = <&gpio 3 GPIO_ACTIVE_LOW>;\n"
+                             "\t};\n"
+                             "};\n";
+    for (const char* name : {"board.dts", "soc.dtsi", "overlay.dtso"}) {
+        const fs::path f = g_dir / "dt" / name;
+        writeText(f, text);
+        CHECK(w->openFiles({f}) == 1);
+        const core::Buffer* b = w->activeBuffer();
+        CHECK(b->userLanguage && b->userLanguage->name == "Device Tree (preinstalled)");
+    }
+    ui::EditorView& v = *w->activeView();
+    v.execute(SCI_COLOURISE, 0, -1);
+    auto styleAt = [&](const std::string& what, std::size_t offset = 0) {
+        const std::size_t at = v.text().find(what);
+        CHECK(at != std::string::npos);
+        return static_cast<int>(v.execute(SCI_GETSTYLEAT, static_cast<uptr_t>(at + offset)));
+    };
+    CHECK(styleAt("/dts-v1/", 1) == SCE_USER_STYLE_KEYWORD1);
+    CHECK(styleAt("#include", 1) == SCE_USER_STYLE_KEYWORD2);
+    CHECK(styleAt("// SPDX", 3) == SCE_USER_STYLE_COMMENTLINE);
+    CHECK(styleAt("/* board", 3) == SCE_USER_STYLE_COMMENT);
+    CHECK(styleAt("model") == SCE_USER_STYLE_KEYWORD3);
+    CHECK(styleAt("#address-cells", 9) == SCE_USER_STYLE_KEYWORD3);
+    CHECK(styleAt("\"Board", 2) == SCE_USER_STYLE_DELIMITER1);
+    CHECK(styleAt("0x1000", 3) == SCE_USER_STYLE_NUMBER);
+    CHECK(styleAt("&gpio", 2) == SCE_USER_STYLE_KEYWORD5);
+    CHECK(styleAt("GPIO_ACTIVE_LOW", 4) == SCE_USER_STYLE_KEYWORD4);
+    CHECK(styleAt("= <1>") == SCE_USER_STYLE_OPERATOR);
+    // Nodes fold, after line and block comments too.
+    auto header = [&](int line) { return (v.execute(SCI_GETFOLDLEVEL, static_cast<uptr_t>(line)) & SC_FOLDLEVELHEADERFLAG) != 0; };
+    CHECK(!header(3) && header(4) && !header(5) && header(7) && !header(8));
 }
 
 void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
@@ -713,6 +759,8 @@ int main(int argc, char** argv)
     testMacrosAndRun(app, langs);
     std::printf("user defined languages...\n");
     testUserDefinedLanguages(app, langs);
+    std::printf("device tree...\n");
+    testDeviceTree(app, langs);
     std::printf("preferences...\n");
     testPreferences(app, langs);
     std::printf("panels...\n");
