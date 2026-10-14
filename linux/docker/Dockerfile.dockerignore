@@ -1,5 +1,8 @@
 # Used automatically by BuildKit for linux/docker/Dockerfile (context = repo root).
 # Keep the context small: only sources the port compiles or installs.
+# Keep the exceptions in step with the data the port stages, installs and
+# tests with (src/CMakeLists.txt nppgtk_data, cmake/Install.cmake,
+# tests/panels_test.cpp).
 .git
 **/build
 **/build-*
@@ -9,9 +12,14 @@ debian/.debhelper
 debian/notepad-plus-plus-gtk
 debian/tmp
 *.deb
-PowerEditor/bin
+PowerEditor/bin/*
+!PowerEditor/bin/userDefineLangs
 PowerEditor/visual.net
 PowerEditor/gcc
 PowerEditor/installer/*
 !PowerEditor/installer/themes
+!PowerEditor/installer/nativeLang
+!PowerEditor/installer/functionList
+!PowerEditor/installer/APIs
+!PowerEditor/installer/filesForTesting
 .pc
