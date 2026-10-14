@@ -436,6 +436,7 @@ private:
     static void onOpenRecent(GSimpleAction* a, GVariant* param, gpointer self);
     static void onSwitchPage(GtkNotebook* nb, GtkWidget* page, guint, gpointer self);
     static gboolean onTabStripButton(GtkWidget* nb, GdkEventButton* ev, gpointer self);
+    static gboolean onTabStripScroll(GtkWidget* nb, GdkEventScroll* ev, gpointer self);
     static gboolean onDeleteEvent(GtkWidget*, GdkEvent*, gpointer self);
     static gboolean onKeyPress(GtkWidget* w, GdkEventKey* ev, gpointer self);
     static void onDragData(GtkWidget*, GdkDragContext* ctx, gint, gint, GtkSelectionData* data, guint, guint time, gpointer self);
@@ -489,6 +490,7 @@ private:
     std::vector<std::unique_ptr<Tab>> tabs_;
     std::unordered_map<const core::Buffer*, std::unique_ptr<platform::FileMonitor>> monitors_;
     int activeView_ = kMainView;
+    double tabWheel_ = 0; // smooth scrolling on a tab bar, not a whole step yet
     std::filesystem::path lastDir_;
     PromptHandler prompt_;
     bool syncingActions_ = false;

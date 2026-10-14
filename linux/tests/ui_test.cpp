@@ -633,6 +633,87 @@ void testTabStripDoubleClick(GtkApplication* app, core::LanguageCatalog& langs)
     w->applySettings();
 }
 
+void testTabStripScroll(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    platform::Settings& st = w->settings();
+    GtkNotebook* nb = w->notebook(ui::MainWindow::kMainView);
+    for (int i = 0; i < 4; ++i)
+        w->newDocument();
+    pump();
+    const int n = gtk_notebook_get_n_pages(nb);
+    CHECK(n >= 4);
+    // The notebook's tab-strip input window takes wheel events.
+    bool masked = false;
+    for (GList* l = gdk_window_peek_children(gtk_widget_get_window(GTK_WIDGET(nb))); l; l = l->next) {
+        gpointer owner = nullptr;
+        gdk_window_get_user_data(GDK_WINDOW(l->data), &owner);
+        if (owner == nb && (gdk_window_get_events(GDK_WINDOW(l->data)) & GDK_SCROLL_MASK))
+            masked = true;
+    }
+    CHECK(masked);
+    // So do the tab labels and their close buttons, passing it to the notebook.
+    GtkWidget* firstLabel = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, 0));
+    CHECK(gtk_widget_get_events(firstLabel) & GDK_SCROLL_MASK);
+    // A wheel step at a point of the notebook's window; true when handled.
+    auto wheel = [&](int x, int y, GdkScrollDirection dir, GdkModifierType mods = GdkModifierType(0), double dy = 0) {
+        GdkWindow* gw = gtk_widget_get_window(GTK_WIDGET(nb));
+        int ox = 0, oy = 0;
+        gdk_window_get_origin(gw, &ox, &oy);
+        GdkEvent* ev = gdk_event_new(GDK_SCROLL);
+        ev->scroll.window = GDK_WINDOW(g_object_ref(gw));
+        ev->scroll.direction = dir;
+        ev->scroll.delta_y = dy;
+        ev->scroll.state = mods;
+        ev->scroll.x_root = ox + x;
+        ev->scroll.y_root = oy + y;
+        gdk_event_set_device(ev, gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_display_get_default())));
+        const bool handled = gtk_widget_event(GTK_WIDGET(nb), ev);
+        gdk_event_free(ev);
+        pump();
+        return handled;
+    };
+    auto current = [&] { return gtk_notebook_get_current_page(nb); };
+    GtkWidget* label = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, 0));
+    GtkAllocation l, c;
+    gtk_widget_get_allocation(label, &l);
+    const int x = l.x + l.width / 2, y = l.y + l.height / 2;
+    gtk_notebook_set_current_page(nb, n - 1);
+    pump();
+    // In the document: left to the editor.
+    gtk_widget_get_allocation(gtk_notebook_get_nth_page(nb, current()), &c);
+    CHECK(!wheel(c.x + c.width / 2, c.y + c.height / 2, GDK_SCROLL_UP));
+    CHECK(current() == n - 1);
+    // Plain wheel: previous/next, stopping at the ends.
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN) && current() == n - 1);
+    CHECK(wheel(x, y, GDK_SCROLL_UP) && current() == n - 2);
+    CHECK(wheel(x, y, GDK_SCROLL_UP) && current() == n - 3);
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN) && current() == n - 2);
+    CHECK(w->activeView()->widget() == gtk_notebook_get_nth_page(nb, n - 2));
+    // Smooth scrolling (touchpads): a whole step switches.
+    CHECK(wheel(x, y, GDK_SCROLL_SMOOTH, GdkModifierType(0), 0.5) && current() == n - 2);
+    CHECK(wheel(x, y, GDK_SCROLL_SMOOTH, GdkModifierType(0), 0.5) && current() == n - 1);
+    // Ctrl: wraps around.
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN, GDK_CONTROL_MASK) && current() == 0);
+    CHECK(wheel(x, y, GDK_SCROLL_UP, GDK_CONTROL_MASK) && current() == n - 1);
+    CHECK(wheel(x, y, GDK_SCROLL_UP) && current() == n - 2);
+    // Ctrl+Shift: first/last.
+    CHECK(wheel(x, y, GDK_SCROLL_UP, GdkModifierType(GDK_CONTROL_MASK | GDK_SHIFT_MASK)) && current() == 0);
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN, GdkModifierType(GDK_CONTROL_MASK | GDK_SHIFT_MASK)) && current() == n - 1);
+    // Shift: moves the active tab, wrapping around.
+    GtkWidget* moved = gtk_notebook_get_nth_page(nb, current());
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN, GDK_SHIFT_MASK) && current() == 0);
+    CHECK(w->activeView()->widget() == moved && gtk_notebook_get_nth_page(nb, 0) == moved);
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN, GDK_SHIFT_MASK) && current() == 1);
+    CHECK(gtk_notebook_get_nth_page(nb, 1) == moved);
+    // With tabs locked Shift only switches, as the plain wheel.
+    st.tabLock = true;
+    CHECK(wheel(x, y, GDK_SCROLL_DOWN, GDK_SHIFT_MASK) && current() == 2);
+    CHECK(gtk_notebook_get_nth_page(nb, 1) == moved);
+    st.tabLock = false;
+}
+
 void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
 {
     Prompter p;
@@ -852,6 +933,7 @@ int main(int argc, char** argv)
     testDeviceTree(app, langs);
     std::printf("tab strip double click...\n");
     testTabStripDoubleClick(app, langs);
+    testTabStripScroll(app, langs);
     std::printf("preferences...\n");
     testPreferences(app, langs);
     std::printf("panels...\n");

@@ -8,6 +8,7 @@
 #include "Notepad_plus_msgs.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <map>
 #include <set>
@@ -258,7 +259,68 @@ GtkWidget* MainWindow::buildNotebook(int)
     gtk_widget_set_hexpand(nb, TRUE);
     g_signal_connect(nb, "switch-page", G_CALLBACK(&MainWindow::onSwitchPage), this);
     g_signal_connect(nb, "button-press-event", G_CALLBACK(&MainWindow::onTabStripButton), this);
+    // Wheel events on the tab strip (GtkNotebook's input window has no scroll mask).
+    gtk_widget_add_events(nb, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
+    g_signal_connect(nb, "scroll-event", G_CALLBACK(&MainWindow::onTabStripScroll), this);
     return nb;
+}
+
+gboolean MainWindow::onTabStripScroll(GtkWidget* nb, GdkEventScroll* ev, gpointer self)
+{
+    auto* w = static_cast<MainWindow*>(self);
+    GtkNotebook* book = GTK_NOTEBOOK(nb);
+    const int cur = gtk_notebook_get_current_page(book), n = gtk_notebook_get_n_pages(book);
+    GdkWindow* gw = gtk_widget_get_window(nb);
+    if (cur < 0 || !gw || !gtk_notebook_get_show_tabs(book))
+        return FALSE;
+    // Only on the tab strip, not in the document below it.
+    int ox = 0, oy = 0;
+    gdk_window_get_origin(gw, &ox, &oy);
+    GtkAllocation a;
+    gtk_widget_get_allocation(gtk_notebook_get_nth_page(book, cur), &a);
+    const double x = ev->x_root - ox, y = ev->y_root - oy;
+    if (x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height)
+        return FALSE;
+
+    int step = 0; // towards the user (down, right) is forward, as upstream
+    switch (ev->direction) {
+    case GDK_SCROLL_UP: case GDK_SCROLL_LEFT: step = -1; break;
+    case GDK_SCROLL_DOWN: case GDK_SCROLL_RIGHT: step = 1; break;
+    case GDK_SCROLL_SMOOTH:
+        w->tabWheel_ += ev->delta_y != 0 ? ev->delta_y : ev->delta_x;
+        if (std::abs(w->tabWheel_) < 1)
+            return TRUE;
+        step = w->tabWheel_ > 0 ? 1 : -1;
+        w->tabWheel_ = 0;
+        break;
+    default: return FALSE;
+    }
+
+    // Upstream TabBar (WM_MOUSEWHEEL), plus a plain wheel switching tabs as
+    // GTK 2 notebooks did: plain or Shift (tabs locked) = previous/next tab,
+    // stopping at the ends; Ctrl = previous/next, wrapping around; Ctrl+Shift
+    // = first/last tab; Shift = move the active tab, wrapping around.
+    const GdkModifierType mods = static_cast<GdkModifierType>(ev->state & gtk_accelerator_get_default_mod_mask());
+    const bool ctrl = mods & GDK_CONTROL_MASK, shift = mods & GDK_SHIFT_MASK;
+    const int view = nb == w->notebooks_[kSubView] ? kSubView : kMainView;
+    int to = cur + step;
+    if (ctrl && shift)
+        to = step > 0 ? n - 1 : 0;
+    else if (ctrl || (shift && !w->settings_.tabLock))
+        to = (to + n) % n;
+    else if (to < 0 || to >= n)
+        return TRUE;
+    if (to == cur)
+        return TRUE;
+    Tab* t = w->tabAt(view, cur);
+    if (!t)
+        return TRUE;
+    w->activateTab(*t); // the scrolled view becomes the active one
+    if (shift && !ctrl && !w->settings_.tabLock)
+        w->moveTab(to);
+    else if (Tab* target = w->tabAt(view, to))
+        w->activateTab(*target);
+    return TRUE;
 }
 
 gboolean MainWindow::onTabStripButton(GtkWidget* nb, GdkEventButton* ev, gpointer self)

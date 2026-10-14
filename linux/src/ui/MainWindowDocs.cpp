@@ -125,6 +125,10 @@ void MainWindow::attachLabel(Tab& t)
     gtk_box_pack_start(GTK_BOX(box), t.labelText, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), close, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(ebox), box);
+    // The label's and the button's input windows pass the wheel on to the
+    // notebook (MainWindow::onTabStripScroll).
+    for (GtkWidget* w : {ebox, close})
+        gtk_widget_add_events(w, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
     gtk_widget_show_all(ebox);
     t.label = ebox;
     t.closeButton = close;

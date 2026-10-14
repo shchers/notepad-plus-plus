@@ -412,7 +412,7 @@ on its own.
 
 | Area | Status |
 |---|---|
-| Tabs | ✅ new/open/close, reorder, close button, middle-click close, double click on the empty tab bar for a new document, Ctrl+Tab, tab list menu, context menu (close, close others, copy path/name/dir, open containing folder, read-only, move/clone) |
+| Tabs | ✅ new/open/close, reorder, close button, middle-click close, double click on the empty tab bar for a new document, mouse wheel on the tab bar switches tabs (Ctrl wraps around, Ctrl+Shift first/last, Shift moves the tab), Ctrl+Tab, tab list menu, context menu (close, close others, copy path/name/dir, open containing folder, read-only, move/clone) |
 | Views | ✅ two views side by side; Move / Clone to Other View, Switch to Other View (F8); clones share the document; an empty view hides; split position persisted |
 | Files | ✅ open (multi), save, save as, save all, reload (keeps positions), close all, close all but active, drag-and-drop, "new 1" replacement, unsaved-changes prompts, permissions-preserving atomic save (GIO), Edit ▸ Read-Only, Copy to Clipboard (path, name, dir) |
 | Sessions | ✅ last session restored at start and saved at exit (`session.xml`, upstream format, both views, positions, bookmarks, folds, language, encoding, read-only); File ▸ Load/Save Session |
