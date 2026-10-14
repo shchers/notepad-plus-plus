@@ -127,6 +127,11 @@ public:
     const core::UserLanguage* userLanguage(const std::string& name) const;
     // Edit > Insert > Date Time (customized): upstream's Windows date picture.
     static std::string formatCustomDate(const std::string& windowsFormat);
+    // The tab bar of a view (tests).
+    GtkNotebook* notebook(int view) const { return GTK_NOTEBOOK(notebooks_[view]); }
+    // Whether a point (root window coordinates) is on the tab strip of `nb`
+    // but on none of its tabs.
+    static bool onEmptyTabStrip(GtkNotebook* nb, double xRoot, double yRoot);
     // Runs a menu command by upstream ID (menuCmdID.h), as WM_COMMAND does.
     bool runCommand(int id) { return cmds_.run(id); }
     bool hasCommand(int id) const { return cmds_.has(id); }
@@ -430,6 +435,7 @@ private:
     static void onStatefulAction(GSimpleAction* a, GVariant* value, gpointer self);
     static void onOpenRecent(GSimpleAction* a, GVariant* param, gpointer self);
     static void onSwitchPage(GtkNotebook* nb, GtkWidget* page, guint, gpointer self);
+    static gboolean onTabStripButton(GtkWidget* nb, GdkEventButton* ev, gpointer self);
     static gboolean onDeleteEvent(GtkWidget*, GdkEvent*, gpointer self);
     static gboolean onKeyPress(GtkWidget* w, GdkEventKey* ev, gpointer self);
     static void onDragData(GtkWidget*, GdkDragContext* ctx, gint, gint, GtkSelectionData* data, guint, guint time, gpointer self);

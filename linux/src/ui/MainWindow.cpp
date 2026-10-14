@@ -257,7 +257,63 @@ GtkWidget* MainWindow::buildNotebook(int)
     gtk_notebook_popup_enable(GTK_NOTEBOOK(nb));
     gtk_widget_set_hexpand(nb, TRUE);
     g_signal_connect(nb, "switch-page", G_CALLBACK(&MainWindow::onSwitchPage), this);
+    g_signal_connect(nb, "button-press-event", G_CALLBACK(&MainWindow::onTabStripButton), this);
     return nb;
+}
+
+gboolean MainWindow::onTabStripButton(GtkWidget* nb, GdkEventButton* ev, gpointer self)
+{
+    // Upstream TabBar (WM_LBUTTONDBLCLK): a double click on the tab strip
+    // outside the tabs opens a new document, here in that view.
+    if (ev->type != GDK_2BUTTON_PRESS || ev->button != 1 || !onEmptyTabStrip(GTK_NOTEBOOK(nb), ev->x_root, ev->y_root))
+        return FALSE;
+    auto* w = static_cast<MainWindow*>(self);
+    w->activeView_ = nb == w->notebooks_[kSubView] ? kSubView : kMainView;
+    w->newDocument();
+    return TRUE;
+}
+
+bool MainWindow::onEmptyTabStrip(GtkNotebook* nb, double xRoot, double yRoot)
+{
+    GdkWindow* gw = gtk_widget_get_window(GTK_WIDGET(nb));
+    if (!gw || !gtk_notebook_get_show_tabs(nb))
+        return false;
+    // The notebook and its tab labels have no windows of their own, so their
+    // allocations share the coordinates of `gw`.
+    int ox = 0, oy = 0;
+    gdk_window_get_origin(gw, &ox, &oy);
+    GtkAllocation nbA;
+    gtk_widget_get_allocation(GTK_WIDGET(nb), &nbA);
+    // Along the strip and across it; the port puts tabs at the top or left.
+    const bool vertical = gtk_notebook_get_tab_pos(nb) == GTK_POS_LEFT;
+    const double along = vertical ? yRoot - oy : xRoot - ox, across = vertical ? xRoot - ox : yRoot - oy;
+    const int start = vertical ? nbA.y : nbA.x, side = vertical ? nbA.x : nbA.y;
+    int first = -1, last = -1, prevEnd = -1, gap = -1, acrossEnd = -1, acrossStart = -1;
+    for (int i = 0, n = gtk_notebook_get_n_pages(nb); i < n; ++i) {
+        GtkWidget* label = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, i));
+        if (!label)
+            continue;
+        if (!gtk_widget_get_mapped(label)) // tabs overflow: no free space, only the scroll arrows
+            return false;
+        GtkAllocation a;
+        gtk_widget_get_allocation(label, &a);
+        const int s = vertical ? a.y : a.x, e = s + (vertical ? a.height : a.width);
+        if (first < 0)
+            first = s;
+        else if (gap < 0)
+            gap = s - prevEnd;
+        prevEnd = last = e;
+        acrossStart = vertical ? a.x : a.y;
+        acrossEnd = std::max(acrossEnd, acrossStart + (vertical ? a.width : a.height));
+    }
+    if (first < 0)
+        return false;
+    // A tab reaches past its label by its padding: half the gap between two
+    // labels, else as far as the first one is from the strip's start.
+    const int pad = gap >= 0 ? gap / 2 : first - start;
+    const int padAcross = acrossStart - side;
+    const bool inStrip = across >= side && across < acrossEnd + padAcross;
+    return inStrip && along >= last + pad && along < start + (vertical ? nbA.height : nbA.width);
 }
 
 void MainWindow::importConfigOnFirstRun(bool settingsExisted)

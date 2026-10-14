@@ -580,6 +580,56 @@ void testDeviceTree(GtkApplication* app, core::LanguageCatalog& langs)
     CHECK(!header(3) && header(4) && !header(5) && header(7) && !header(8));
 }
 
+void testTabStripDoubleClick(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    platform::Settings& st = w->settings();
+    GtkNotebook* nb = w->notebook(ui::MainWindow::kMainView);
+    w->newDocument();
+    // A double click at a point of the notebook's window (the allocations'
+    // coordinates); true when it was handled.
+    auto doubleClick = [&](int x, int y) {
+        GdkWindow* gw = gtk_widget_get_window(GTK_WIDGET(nb));
+        int ox = 0, oy = 0;
+        gdk_window_get_origin(gw, &ox, &oy);
+        GdkEvent* ev = gdk_event_new(GDK_2BUTTON_PRESS);
+        ev->button.window = GDK_WINDOW(g_object_ref(gw));
+        ev->button.button = 1;
+        ev->button.x_root = ox + x;
+        ev->button.y_root = oy + y;
+        gdk_event_set_device(ev, gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_display_get_default())));
+        const bool handled = gtk_widget_event(GTK_WIDGET(nb), ev);
+        gdk_event_free(ev);
+        pump();
+        return handled;
+    };
+    for (bool vertical : {false, true}) {
+        st.tabVertical = vertical;
+        w->applySettings();
+        pump();
+        const std::size_t before = w->tabCount(ui::MainWindow::kMainView);
+        GtkWidget* lastLabel = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, gtk_notebook_get_n_pages(nb) - 1));
+        GtkAllocation l, n;
+        gtk_widget_get_allocation(lastLabel, &l);
+        gtk_widget_get_allocation(GTK_WIDGET(nb), &n);
+        // On the last tab's label: not handled (nor closed, the option is off).
+        CHECK(!st.tabDoubleClickClose && !doubleClick(l.x + l.width / 2, l.y + l.height / 2));
+        CHECK(w->tabCount(ui::MainWindow::kMainView) == before);
+        // In the editor: nothing either.
+        CHECK(!doubleClick(n.x + n.width / 2, n.y + n.height / 2));
+        // Past the last tab, on the strip: a new document, active.
+        const int x = vertical ? l.x + l.width / 2 : l.x + l.width + 60;
+        const int y = vertical ? l.y + l.height + 60 : l.y + l.height / 2;
+        CHECK(ui::MainWindow::onEmptyTabStrip(nb, 0, 0) == false);
+        CHECK(doubleClick(x, y));
+        CHECK(w->tabCount(ui::MainWindow::kMainView) == before + 1);
+        CHECK(w->activeBuffer() && w->activeBuffer()->isUntitled());
+    }
+    st.tabVertical = false;
+    w->applySettings();
+}
+
 void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
 {
     Prompter p;
@@ -761,6 +811,8 @@ int main(int argc, char** argv)
     testUserDefinedLanguages(app, langs);
     std::printf("device tree...\n");
     testDeviceTree(app, langs);
+    std::printf("tab strip double click...\n");
+    testTabStripDoubleClick(app, langs);
     std::printf("preferences...\n");
     testPreferences(app, langs);
     std::printf("panels...\n");
