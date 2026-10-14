@@ -1785,6 +1785,8 @@ static void ColouriseUserDoc(Sci_PositionU startPos, Sci_Position length, int in
                         readLastNested(lastNestedGroup, newState, openIndex);
                         // paint end of comment sequence
                         sc.SetState(newState);
+                        if (sc.atLineEnd)
+                            checkEOL = EOL_SKIP_CHECK;
 
                         isInComment = false;
                         dontMove = true;
@@ -1855,6 +1857,7 @@ static void ColouriseUserDoc(Sci_PositionU startPos, Sci_Position length, int in
                         {
                             visibleChars = false;
                             skipVisibleCheck = true;
+                            checkEOL = EOL_FORCE_CHECK;
                         }
                         // was current line comment sequence nested, or do we start over from SCE_USER_STYLE_IDENTIFIER?
                         readLastNested(lastNestedGroup, newState, openIndex);
