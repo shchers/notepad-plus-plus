@@ -669,42 +669,38 @@ void MainWindow::setLocalization(const std::string& fileName)
 
 void MainWindow::buildToolbar(GtkWidget* vbox)
 {
+    // Upstream's buttons; their icons are set by applyToolbarIcons().
     GtkWidget* tb = gtk_toolbar_new();
     gtk_toolbar_set_style(GTK_TOOLBAR(tb), GTK_TOOLBAR_ICONS);
-    gtk_toolbar_set_icon_size(GTK_TOOLBAR(tb), GTK_ICON_SIZE_SMALL_TOOLBAR);
-    const struct { const char* icon; int id; const char* tip; } items[] = {
-        {"document-new", IDM_FILE_NEW, "New"},          {"document-open", IDM_FILE_OPEN, "Open"},
-        {"document-save", IDM_FILE_SAVE, "Save"},       {"document-save-as", IDM_FILE_SAVEALL, "Save All"},
-        {"window-close", IDM_FILE_CLOSE, "Close"},      {"document-print", IDM_FILE_PRINT, "Print"},
-        {nullptr, 0, nullptr},
-        {"edit-cut", IDM_EDIT_CUT, "Cut"},              {"edit-copy", IDM_EDIT_COPY, "Copy"},
-        {"edit-paste", IDM_EDIT_PASTE, "Paste"},        {nullptr, 0, nullptr},
-        {"edit-undo", IDM_EDIT_UNDO, "Undo"},           {"edit-redo", IDM_EDIT_REDO, "Redo"},
-        {nullptr, 0, nullptr},
-        {"edit-find", IDM_SEARCH_FIND, "Find"},         {"edit-find-replace", IDM_SEARCH_REPLACE, "Replace"},
-        {nullptr, 0, nullptr},
-        {"zoom-in", IDM_VIEW_ZOOMIN, "Zoom in"},        {"zoom-out", IDM_VIEW_ZOOMOUT, "Zoom out"},
-        {nullptr, 0, nullptr},
-        {"media-record", IDM_MACRO_STARTRECORDINGMACRO, "Start Recording"},
-        {"media-playback-stop", IDM_MACRO_STOPRECORDINGMACRO, "Stop Recording"},
-        {"media-playback-start", IDM_MACRO_PLAYBACKRECORDEDMACRO, "Playback"},
-    };
-    for (const auto& it : items) {
-        if (it.icon && !cmds_.has(it.id))
+    bool separator = false; // pending, dropped when its group has no command
+    for (int i = 0; i < kToolbarButtonCount; ++i) {
+        const ToolbarButton& b = kToolbarButtons[i];
+        if (!b.id) {
+            separator = gtk_toolbar_get_n_items(GTK_TOOLBAR(tb)) > 0;
             continue;
-        GtkToolItem* ti;
-        if (!it.icon) {
-            ti = gtk_separator_tool_item_new();
-        } else {
-            const std::string tip = core::Translator::plain(tr_.command(it.id, it.tip));
-            ti = gtk_tool_button_new(nullptr, tip.c_str());
-            gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(ti), it.icon);
-            g_object_set_data(G_OBJECT(ti), "npp-icon", const_cast<char*>(it.icon)); // Preferences > Toolbar icon sets
-            gtk_actionable_set_action_name(GTK_ACTIONABLE(ti), CommandTable::detailedName(it.id).c_str());
-            gtk_widget_set_tooltip_text(GTK_WIDGET(ti), tip.c_str());
         }
+        if (!cmds_.has(b.id))
+            continue;
+        if (separator)
+            gtk_toolbar_insert(GTK_TOOLBAR(tb), gtk_separator_tool_item_new(), -1);
+        separator = false;
+        const std::string tip = core::Translator::plain(tr_.command(b.id, b.tip));
+        // Commands with a check mark show it as a pressed button, as upstream.
+        GtkToolItem* ti = cmds_.isCheckable(b.id) ? gtk_toggle_tool_button_new() : gtk_tool_button_new(nullptr, nullptr);
+        gtk_tool_button_set_label(GTK_TOOL_BUTTON(ti), tip.c_str());
+        gtk_tool_button_set_icon_widget(GTK_TOOL_BUTTON(ti), gtk_image_new());
+        g_object_set_data(G_OBJECT(ti), "npp-button", const_cast<ToolbarButton*>(&b));
+        gtk_actionable_set_action_name(GTK_ACTIONABLE(ti), CommandTable::detailedName(b.id).c_str());
+        gtk_widget_set_tooltip_text(GTK_WIDGET(ti), tip.c_str());
+        // Upstream's disabled icons, where it has them. The action enables
+        // the tool button's inner button, not the tool item.
+        g_signal_connect_swapped(gtk_bin_get_child(GTK_BIN(ti)), "state-flags-changed", G_CALLBACK(+[](GtkWidget* item) { showToolbarIcon(item); }), ti);
         gtk_toolbar_insert(GTK_TOOLBAR(tb), ti, -1);
     }
+    // New scale, or GTK theme (light or dark icons).
+    g_signal_connect_swapped(tb, "notify::scale-factor", G_CALLBACK(+[](MainWindow* w) { w->applyToolbarIcons(); }), this);
+    g_signal_connect_swapped(tb, "style-updated", G_CALLBACK(+[](MainWindow* w) { w->applyToolbarIcons(); }), this);
+    gtk_widget_show_all(tb);
     gtk_box_pack_start(GTK_BOX(vbox), tb, FALSE, FALSE, 0);
     toolbar_ = tb;
 }
@@ -744,6 +740,7 @@ void MainWindow::buildStatusBar(GtkWidget* vbox)
 
 void MainWindow::refreshTab(Tab& t)
 {
+    syncEditStates(); // the document may be modified now: Save, Save All
     const core::Buffer& b = *t.buf;
     std::string name = b.name();
     // Preferences > Tab Bar: "Max. tab label length".
@@ -776,6 +773,7 @@ void MainWindow::refreshTitle()
 
 void MainWindow::refreshStatus()
 {
+    syncEditStates(); // after edits and selection changes
     Tab* t = activeTab();
     if (!t) {
         for (GtkWidget* l : {stLang_, stStats_, stPos_, stEol_, stEnc_, stIns_})
@@ -873,6 +871,30 @@ void MainWindow::syncActionStates()
     cmds_.setEnabled(IDM_VIEW_GOTO_ANOTHER_VIEW, twoDocs);
     cmds_.setEnabled(IDM_VIEW_SWITCHTO_OTHER_VIEW, tabCount(kMainView) > 0 && tabCount(kSubView) > 0);
     syncingActions_ = false;
+    syncEditStates();
+}
+
+void MainWindow::syncEditStates()
+{
+    // Upstream checkDocState, checkUndoState and checkClipboard: what the
+    // menu, the toolbar (its disabled icons) and the shortcuts can do now.
+    Tab* t = activeTab();
+    if (!t || closing_)
+        return;
+    const bool dirty = isModified(*t->buf);
+    bool anyDirty = dirty;
+    for (const auto& o : tabs_)
+        anyDirty = anyDirty || isModified(*o->buf);
+    cmds_.setEnabled(IDM_FILE_SAVE, dirty);
+    cmds_.setEnabled(IDM_FILE_SAVEALL, anyDirty);
+    EditorView& v = *t->view;
+    cmds_.setEnabled(IDM_EDIT_UNDO, v.execute(SCI_CANUNDO) != 0);
+    cmds_.setEnabled(IDM_EDIT_REDO, v.execute(SCI_CANREDO) != 0);
+    const bool selection = v.execute(SCI_GETSELECTIONEMPTY) == 0;
+    const bool lineWithoutSelection = settings_.copyLineNoSelection;
+    cmds_.setEnabled(IDM_EDIT_CUT, selection || lineWithoutSelection);
+    cmds_.setEnabled(IDM_EDIT_COPY, selection || lineWithoutSelection);
+    cmds_.setEnabled(IDM_EDIT_PASTE, v.execute(SCI_CANPASTE) != 0);
 }
 
 void MainWindow::applyViewSettings(EditorView& v)

@@ -59,6 +59,7 @@ add_library(nppgtk_core STATIC
   ui/SearchResults.cpp
   ui/ShortcutDialog.cpp
   ui/TerminalPanel.cpp
+  ui/ToolbarIcons.cpp
 )
 target_include_directories(nppgtk_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -99,6 +100,9 @@ add_custom_target(nppgtk_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/bin/userDefineLangs" "${NPP_BUILD_DATA_DIR}/userDefineLangs"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/functionList" "${NPP_BUILD_DATA_DIR}/functionList"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_ROOT}/PowerEditor/installer/APIs" "${NPP_BUILD_DATA_DIR}/autoCompletion"
-  COMMENT "Staging Notepad++ language, style, localization, UDL, function list and auto-completion definitions"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_SRC}/icons/light/toolbar" "${NPP_BUILD_DATA_DIR}/icons/light/toolbar"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_SRC}/icons/dark/toolbar" "${NPP_BUILD_DATA_DIR}/icons/dark/toolbar"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${NPP_SRC}/icons/standard/toolbar" "${NPP_BUILD_DATA_DIR}/icons/standard/toolbar"
+  COMMENT "Staging Notepad++ language, style, localization, UDL, function list and auto-completion definitions, toolbar icons"
   VERBATIM)
 add_dependencies(${NPP_EXE_NAME} nppgtk_data)

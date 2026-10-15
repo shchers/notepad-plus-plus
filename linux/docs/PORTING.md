@@ -412,6 +412,7 @@ on its own.
 
 | Area | Status |
 |---|---|
+| Menu states | ✅ as upstream checkDocState / checkUndoState / checkClipboard: Save without changes, Save All with none, Undo / Redo with nothing to undo or redo, Cut / Copy without a selection (when "copy/cut the line without a selection" is off) and Paste where Scintilla cannot paste are disabled, in the menu, the toolbar and for the shortcuts |
 | Tabs | ✅ new/open/close, reorder, close button, middle-click close, double click on the empty tab bar for a new document, mouse wheel on the tab bar switches tabs (Ctrl wraps around, Ctrl+Shift first/last, Shift moves the tab), Ctrl+Tab, tab list menu, context menu (close, close others, copy path/name/dir, open containing folder, read-only, move/clone) |
 | Views | ✅ two views side by side; Move / Clone to Other View, Switch to Other View (F8); clones share the document; an empty view hides; split position persisted |
 | Files | ✅ open (multi), save, save as, save all, reload (keeps positions), close all, close all but active, drag-and-drop, "new 1" replacement, unsaved-changes prompts, permissions-preserving atomic save (GIO), Edit ▸ Read-Only, Copy to Clipboard (path, name, dir) |
@@ -473,7 +474,7 @@ on its own.
 | `MISC/Common/*` | `platform/` | paths, string conversion, file helpers |
 | `WinControls/TabBar` | `GtkNotebook` | |
 | `WinControls/StatusBar` | `ui/MainWindow` status fields | |
-| `WinControls/ToolBar` | `GtkToolbar` | upstream icon sets later (`icons/`) |
+| `WinControls/ToolBar` | `GtkToolbar`, `ui/ToolbarIcons` | upstream's buttons in its order and its icons (`PowerEditor/src/icons`, staged as `<data>/icons`): the five Preferences sets (Fluent regular and filled, small and large, from the `.ico` entry drawn at that size; Standard `.bmp`), dark mode icons on a dark GTK toolbar, disabled icons, pressed toggle buttons; buttons of commands the port lacks yet (synchronized scrolling, the UDL dialog, Monitoring) are left out |
 | `WinControls/OpenSaveFileDialog` | `GtkFileChooserNative` | portal-aware (Flatpak/Snap-ready) |
 | `WinControls/ReadDirectoryChanges` | `platform/FileMonitor` (`GFileMonitor`, inotify) | |
 | `WinControls/DockingWnd` (`DockingManager`, `DockingCont`, `Gripper`) | `ui/DockManager` | GtkPaned + GtkNotebook tab groups, §2.2 |

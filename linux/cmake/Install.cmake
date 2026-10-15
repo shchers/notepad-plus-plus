@@ -32,6 +32,11 @@ install(DIRECTORY "${NPP_ROOT}/PowerEditor/installer/APIs/"
 install(DIRECTORY "${NPP_ROOT}/PowerEditor/bin/userDefineLangs/"
         DESTINATION ${NPP_DATA_SUBDIR}/userDefineLangs
         FILES_MATCHING PATTERN "*.xml")
+foreach(_set light dark standard)
+  install(DIRECTORY "${NPP_SRC}/icons/${_set}/toolbar/"
+          DESTINATION ${NPP_DATA_SUBDIR}/icons/${_set}/toolbar
+          FILES_MATCHING PATTERN "*.ico" PATTERN "*.bmp")
+endforeach()
 
 configure_file("${_pkg}/notepad-plus-plus-gtk.desktop.in"
                "${CMAKE_BINARY_DIR}/${NPP_APP_ID}.desktop" @ONLY)

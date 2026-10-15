@@ -29,6 +29,7 @@
 #include "ui/CharPanel.h"
 #include "ui/ClipboardHistoryPanel.h"
 #include "ui/TerminalPanel.h"
+#include "ui/ToolbarIcons.h"
 #include "ui/Commands.h"
 #include "ui/DockManager.h"
 #include "ui/DocListPanel.h"
@@ -420,6 +421,8 @@ private:
     void applyDarkMode();
     void applyTabBar();
     void applyToolbarIcons();
+    void syncEditStates();
+    static void showToolbarIcon(GtkWidget* item);
     std::filesystem::path dialogFolder() const; // Preferences > Default Directory
     bool desktopPrefersDark() const;
     const core::ApiFile* apiFor(const core::Buffer& b);

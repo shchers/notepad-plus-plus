@@ -8,6 +8,7 @@
 #include "platform/FileIO.h"
 #include "platform/Paths.h"
 #include "ui/MainWindow.h"
+#include "ui/ToolbarIcons.h"
 
 #include "FindReplaceDlg_rc.h"
 #include "menuCmdID.h"
@@ -809,6 +810,94 @@ void testTerminal(GtkApplication* app, core::LanguageCatalog& langs)
     pump();
 }
 
+void testToolbar(GtkApplication* app, core::LanguageCatalog& langs)
+{
+    // Upstream's icon files, staged with the data.
+    const fs::path icons = platform::dataDir() / "icons";
+    for (int px : {16, 20, 32, 48}) {
+        GdkPixbuf* pb = ui::loadToolbarIcon(icons / "light" / "toolbar" / "regular" / "new_off.ico", px);
+        CHECK(pb && gdk_pixbuf_get_width(pb) == px && gdk_pixbuf_get_height(pb) == px);
+        if (pb)
+            g_object_unref(pb);
+    }
+    // Standard icons: the grey background is transparent.
+    GdkPixbuf* bmp = ui::loadToolbarIcon(icons / "standard" / "toolbar" / "newFile.bmp", 16);
+    CHECK(bmp && gdk_pixbuf_get_has_alpha(bmp) && gdk_pixbuf_get_pixels(bmp)[3] == 0);
+    if (bmp)
+        g_object_unref(bmp);
+    CHECK(!ui::loadToolbarIcon(icons / "no-such.ico", 16));
+    for (int i = 0; i < ui::kToolbarButtonCount; ++i) {
+        const ui::ToolbarButton& b = ui::kToolbarButtons[i];
+        if (!b.id)
+            continue;
+        std::error_code ec;
+        for (int set = 0; set < 5; ++set)
+            for (bool dark : {false, true})
+                CHECK(fs::is_regular_file(ui::toolbarIconFile(icons, b, set, dark, false), ec));
+    }
+    CHECK(ui::toolbarIconFile(icons, ui::kToolbarButtons[0], 0, false, true).empty()); // New: no disabled icon
+
+    Prompter p;
+    auto w = makeWindow(app, langs, p);
+    w->newDocument();
+    pump();
+    platform::Settings& st = w->settings();
+    GtkToolbar* tb = nullptr;
+    GList* children = gtk_container_get_children(GTK_CONTAINER(gtk_bin_get_child(GTK_BIN(w->window()))));
+    for (GList* it = children; it; it = it->next)
+        if (GTK_IS_TOOLBAR(it->data))
+            tb = GTK_TOOLBAR(it->data);
+    g_list_free(children);
+    CHECK(tb);
+    if (!tb)
+        return;
+    // Upstream's buttons the port has commands for, in upstream's order.
+    std::vector<int> ids;
+    for (int i = 0; i < gtk_toolbar_get_n_items(tb); ++i)
+        if (const auto* b = static_cast<const ui::ToolbarButton*>(g_object_get_data(G_OBJECT(gtk_toolbar_get_nth_item(tb, i)), "npp-button")))
+            ids.push_back(b->id);
+    std::vector<int> expected;
+    for (int i = 0; i < ui::kToolbarButtonCount; ++i)
+        if (ui::kToolbarButtons[i].id && w->hasCommand(ui::kToolbarButtons[i].id))
+            expected.push_back(ui::kToolbarButtons[i].id);
+    CHECK(ids == expected && ids.size() >= 25);
+    auto item = [&](int id) -> GtkToolItem* {
+        for (int i = 0; i < gtk_toolbar_get_n_items(tb); ++i) {
+            GtkToolItem* ti = gtk_toolbar_get_nth_item(tb, i);
+            const auto* b = static_cast<const ui::ToolbarButton*>(g_object_get_data(G_OBJECT(ti), "npp-button"));
+            if (b && b->id == id)
+                return ti;
+        }
+        return nullptr;
+    };
+    auto shown = [&](int id) {
+        GtkWidget* img = gtk_tool_button_get_icon_widget(GTK_TOOL_BUTTON(item(id)));
+        return static_cast<cairo_surface_t*>(g_object_get_data(G_OBJECT(img), "npp-shown"));
+    };
+    // Check-mark commands are toggle buttons.
+    CHECK(GTK_IS_TOGGLE_TOOL_BUTTON(item(IDM_VIEW_WRAP)) && !GTK_IS_TOGGLE_TOOL_BUTTON(item(IDM_FILE_NEW)));
+    for (int set = 0; set < 5; ++set) {
+        st.toolbarIconSet = set;
+        w->applySettings();
+        pump();
+        for (int id : ids) {
+            cairo_surface_t* s = shown(id);
+            CHECK(s && cairo_image_surface_get_width(s) == ui::toolbarIconPixels(set) * gtk_widget_get_scale_factor(GTK_WIDGET(tb)));
+        }
+        // Undo with nothing to undo: upstream's disabled icon (Fluent sets).
+        GtkToolItem* undo = item(IDM_EDIT_UNDO);
+        CHECK(!w->isEnabled(IDM_EDIT_UNDO) && !gtk_widget_is_sensitive(gtk_bin_get_child(GTK_BIN(undo))));
+        auto* dis = static_cast<cairo_surface_t*>(g_object_get_data(G_OBJECT(undo), "npp-icon-dis"));
+        CHECK(set == 4 ? !dis : dis && shown(IDM_EDIT_UNDO) == dis);
+    }
+    // Typing enables Undo: its normal icon.
+    w->activeView()->execute(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>("x"));
+    pump();
+    CHECK(shown(IDM_EDIT_UNDO) == g_object_get_data(G_OBJECT(item(IDM_EDIT_UNDO)), "npp-icon"));
+    st.toolbarIconSet = 0;
+    w->applySettings();
+}
+
 void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
 {
     Prompter p;
@@ -1029,6 +1118,7 @@ int main(int argc, char** argv)
     std::printf("tab strip double click...\n");
     testTabStripDoubleClick(app, langs);
     testTabStripScroll(app, langs);
+    testToolbar(app, langs);
     std::printf("preferences...\n");
     testPreferences(app, langs);
     std::printf("panels...\n");

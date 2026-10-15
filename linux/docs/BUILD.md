@@ -208,8 +208,10 @@ are compiling those files outside this CMake project. Upstream's copies miss
 **Tests hang or fail with `cannot open display`**: install `xvfb xauth`, or
 unset `DISPLAY` so CTest uses `xvfb-run`.
 
-**Toolbar icons missing / `Could not load a pixbuf ... .svg`**: install
-`adwaita-icon-theme librsvg2-common` (the `.deb` recommends both).
+**Icons missing / `Could not load a pixbuf ... .svg`**: install
+`adwaita-icon-theme librsvg2-common` (the `.deb` recommends both). The
+toolbar uses Notepad++'s own icons from `<data>/icons`; it falls back to the
+icon theme only when those files are missing.
 
 **Generic window icon on Wayland**: the compositor finds the icon through the
 desktop file named after the window's app ID,

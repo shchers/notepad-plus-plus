@@ -246,7 +246,6 @@ void MainWindow::cmdPreferences()
                                {{6103, "Fluent UI: small"}, {6104, "Fluent UI: large"}, {6129, "Filled Fluent UI: small"},
                                 {6130, "Filled Fluent UI: large"}, {6105, "Standard icons: small"}},
                                [&st](int v) { st.toolbarIconSet = v; }, {}, true, 1);
-    b.note("The icons come from the desktop's icon theme: Fluent sets use its symbolic icons, the others its full-colour ones.");
     g_signal_connect_swapped(tbHide, "toggled", G_CALLBACK(+[](GtkWidget* r) {
                                  gtk_widget_set_sensitive(r, !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(
                                                                  g_object_get_data(G_OBJECT(r), "npp-hide"))));
@@ -1121,23 +1120,62 @@ const core::ApiFile* MainWindow::apiFor(const core::Buffer& b)
 
 void MainWindow::applyToolbarIcons()
 {
-    // Preferences > Toolbar: Fluent sets use the theme's symbolic icons,
-    // large sets the large toolbar size.
+    // Preferences > Toolbar: upstream's icon sets, drawn for the screen's
+    // scale. Its dark mode icons go on a dark toolbar: the GTK theme's, which
+    // stays light with a dark editor theme when it has no dark variant.
+    GdkRGBA fg;
+    gtk_style_context_get_color(gtk_widget_get_style_context(toolbar_), GTK_STATE_FLAG_NORMAL, &fg);
+    const bool dark = 0.2126 * fg.red + 0.7152 * fg.green + 0.0722 * fg.blue > 0.5; // light text
     const int set = settings_.toolbarIconSet;
-    const bool large = set == 1 || set == 3;
-    const bool symbolic = set == 0 || set == 1;
-    gtk_toolbar_set_icon_size(GTK_TOOLBAR(toolbar_), large ? GTK_ICON_SIZE_LARGE_TOOLBAR : GTK_ICON_SIZE_SMALL_TOOLBAR);
+    const int scale = gtk_widget_get_scale_factor(toolbar_);
+    const int px = toolbarIconPixels(set);
+    const fs::path dir = platform::dataDir() / "icons";
+    auto surface = [&](const fs::path& file) -> cairo_surface_t* {
+        if (file.empty())
+            return nullptr;
+        GdkPixbuf* pb = loadToolbarIcon(file, px * scale);
+        if (!pb)
+            return nullptr;
+        cairo_surface_t* s = gdk_cairo_surface_create_from_pixbuf(pb, scale, nullptr);
+        g_object_unref(pb);
+        return s;
+    };
     const int n = gtk_toolbar_get_n_items(GTK_TOOLBAR(toolbar_));
     for (int i = 0; i < n; ++i) {
         GtkToolItem* it = gtk_toolbar_get_nth_item(GTK_TOOLBAR(toolbar_), i);
-        if (!GTK_IS_TOOL_BUTTON(it))
-            continue;
-        const char* base = static_cast<const char*>(g_object_get_data(G_OBJECT(it), "npp-icon"));
-        if (!base)
-            continue;
-        const std::string name = symbolic ? std::string(base) + "-symbolic" : std::string(base);
-        gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(it), name.c_str());
+        const auto* b = static_cast<const ToolbarButton*>(g_object_get_data(G_OBJECT(it), "npp-button"));
+        if (!b)
+            continue; // a separator or a plugin's button
+        g_object_set_data_full(G_OBJECT(it), "npp-icon", surface(toolbarIconFile(dir, *b, set, dark, false)),
+                               reinterpret_cast<GDestroyNotify>(cairo_surface_destroy));
+        g_object_set_data_full(G_OBJECT(it), "npp-icon-dis", surface(toolbarIconFile(dir, *b, set, dark, true)),
+                               reinterpret_cast<GDestroyNotify>(cairo_surface_destroy));
+        g_object_set_data(G_OBJECT(it), "npp-icon-px", GINT_TO_POINTER(px));
+        showToolbarIcon(GTK_WIDGET(it));
     }
+}
+
+void MainWindow::showToolbarIcon(GtkWidget* item)
+{
+    const auto* b = static_cast<const ToolbarButton*>(g_object_get_data(G_OBJECT(item), "npp-button"));
+    GtkWidget* image = b ? gtk_tool_button_get_icon_widget(GTK_TOOL_BUTTON(item)) : nullptr;
+    if (!image)
+        return;
+    auto* normal = static_cast<cairo_surface_t*>(g_object_get_data(G_OBJECT(item), "npp-icon"));
+    auto* disabled = static_cast<cairo_surface_t*>(g_object_get_data(G_OBJECT(item), "npp-icon-dis"));
+    GtkWidget* button = gtk_bin_get_child(GTK_BIN(item));
+    cairo_surface_t* s = disabled && button && !gtk_widget_is_sensitive(button) ? disabled : normal;
+    if (s) {
+        if (gtk_image_get_storage_type(GTK_IMAGE(image)) != GTK_IMAGE_SURFACE || g_object_get_data(G_OBJECT(image), "npp-shown") != s) {
+            gtk_image_set_from_surface(GTK_IMAGE(image), s);
+            g_object_set_data(G_OBJECT(image), "npp-shown", s);
+        }
+        return;
+    }
+    // Icon files missing: the desktop theme's icon.
+    const int px = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "npp-icon-px"));
+    gtk_image_set_from_icon_name(GTK_IMAGE(image), b->theme, px > 16 ? GTK_ICON_SIZE_LARGE_TOOLBAR : GTK_ICON_SIZE_SMALL_TOOLBAR);
+    g_object_set_data(G_OBJECT(image), "npp-shown", nullptr);
 }
 
 void MainWindow::applyTabBar()
