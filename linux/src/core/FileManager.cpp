@@ -85,7 +85,7 @@ bool isSnapshotPath(const fs::path& p)
     return norm.parent_path() == dir;
 }
 
-bool writeSnapshot(Buffer& buf, std::string_view utf8, std::string* error)
+bool writeSnapshot(Buffer& buf, std::string_view utf8, const UndoState* undo, std::string* error)
 {
     if (!isSnapshotPath(buf.snapshotPath)) {
         // Upstream naming: "<file name>@<timestamp>"; disambiguate within a second.
@@ -101,6 +101,10 @@ bool writeSnapshot(Buffer& buf, std::string_view utf8, std::string* error)
         bytes = platform::encode(utf8, {"UTF-8", platform::Bom::Utf8}, nullptr);
     if (!bytes || !platform::writeFileAtomic(buf.snapshotPath, *bytes, error))
         return false;
+    // The undo history is a bonus: without it the text still comes back.
+    std::error_code ec;
+    if (!undo || undo->empty() || !writeUndoState(undoStatePath(buf.snapshotPath), *undo, nullptr))
+        fs::remove(undoStatePath(buf.snapshotPath), ec);
     buf.snapshotStale = false;
     return true;
 }
@@ -110,9 +114,25 @@ void deleteSnapshot(Buffer& buf)
     if (isSnapshotPath(buf.snapshotPath)) {
         std::error_code ec;
         fs::remove(buf.snapshotPath, ec);
+        fs::remove(undoStatePath(buf.snapshotPath), ec);
     }
     buf.snapshotPath.clear();
     buf.snapshotStale = false;
+}
+
+void removeOrphanUndoStates()
+{
+    std::error_code ec;
+    for (fs::directory_iterator it(snapshotDir(), ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path& p = it->path();
+        if (p.extension() != ".undo")
+            continue;
+        fs::path snap = p;
+        snap.replace_extension();
+        std::error_code ec2;
+        if (!fs::exists(snap, ec2))
+            fs::remove(p, ec2);
+    }
 }
 
 } // namespace npp::core

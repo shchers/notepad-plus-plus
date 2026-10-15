@@ -12,6 +12,7 @@
 #include "core/Sci.h"
 #include "core/StyleCatalog.h"
 #include "core/UserLanguage.h"
+#include "core/UndoState.h"
 
 // Order matters: ScintillaWidget.h expects GTK types to be declared.
 #include <gtk/gtk.h>
@@ -20,6 +21,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -93,6 +95,11 @@ public:
 
     std::string text() const;
     void setText(std::string_view utf8);       // replaces content, clears undo, sets save point
+    // The document's undo history (Scintilla's undo save API); nullopt when
+    // its text is over core::kMaxUndoStateBytes. restoreUndoState() rebuilds
+    // it on a document just loaded with setText(), if it fits that text.
+    std::optional<core::UndoState> undoState() const;
+    bool restoreUndoState(const core::UndoState& s);
     std::string selectedText() const;
 
     sptr_t length() const { return execute(SCI_GETLENGTH); }

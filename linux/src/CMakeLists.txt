@@ -32,6 +32,7 @@ add_library(nppgtk_core STATIC
   core/NppConfig.cpp
   core/RecentFiles.cpp
   core/Session.cpp
+  core/UndoState.cpp
   core/StyleCatalog.cpp
   ui/EditorView.cpp
   ui/CharPanel.cpp

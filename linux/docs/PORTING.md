@@ -383,6 +383,15 @@ the next start restores the documents dirty. Snapshot paths read from
 `session.xml` must lie inside that folder, as upstream confines
 `backupFilePath`. A snapshot of a named file remembers the file's
 modification time, so edits made outside meanwhile are reported on restore.
+Unlike upstream, the undo history comes back too: each snapshot has a
+`<snapshot>.undo` beside it, written with Scintilla's undo save API
+(`SCI_GETUNDOACTIONS` …) and restored with `SCI_PUSHUNDOACTIONTYPE` …
+`SCI_SETUNDOCURRENT` (`core/UndoState`). Undoing back to the saved state
+makes the document clean again. The history is only applied when the
+snapshot's text hashes the same as when it was taken, and is not kept past
+64 MB of undo text. The `.undo` file goes with its snapshot: on close,
+save, reload or undo back to the saved state. Ones left without a snapshot
+(after a crash) are removed at start.
 "Backup on save" (simple `.bak` or verbose `nppBackup/…<timestamp>.bak`)
 follows upstream naming.
 
@@ -417,7 +426,7 @@ on its own.
 | Views | ✅ two views side by side; Move / Clone to Other View, Switch to Other View (F8); clones share the document; an empty view hides; split position persisted |
 | Files | ✅ open (multi), save, save as, save all, reload (keeps positions), close all, close all but active, drag-and-drop, "new 1" replacement, unsaved-changes prompts, permissions-preserving atomic save (GIO), Edit ▸ Read-Only, Copy to Clipboard (path, name, dir) |
 | Sessions | ✅ last session restored at start and saved at exit (`session.xml`, upstream format, both views, positions, bookmarks, folds, language, encoding, read-only); File ▸ Load/Save Session |
-| Backup | ✅ session snapshot and periodic backup of unsaved documents (restored dirty, no exit prompt); backup on save (simple / verbose, custom directory); Preferences ▸ Backup |
+| Backup | ✅ session snapshot and periodic backup of unsaved documents (restored dirty with their undo history, no exit prompt); backup on save (simple / verbose, custom directory); Preferences ▸ Backup |
 | Recent files | ✅ File menu history (closed files, max 10 or `config.xml` value), Restore Recent Closed File (Ctrl+Shift+T), Open All, Empty list; missing files offered for removal |
 | External change detection | ✅ `GFileMonitor`: ask to reload (with or without local changes), update silently, deleted-file prompt; Preferences ▸ MISC. ▸ File Status Auto-Detection |
 | Single instance | ✅ D-Bus (GApplication): files and switches go to the running window; `-multiInst`, `-nosession` |

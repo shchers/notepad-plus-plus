@@ -1004,6 +1004,7 @@ void MainWindow::restoreLastSession()
         if (!loadSession(lastSessionPath(), &err))
             g_warning("Cannot restore the last session: %s", err.c_str());
     }
+    core::removeOrphanUndoStates();
     restartSnapshotTimer();
 }
 
@@ -1057,9 +1058,11 @@ MainWindow::Tab* MainWindow::openSessionFile(const core::SessionFile& f, int vie
     applyLoaded(*t, untitled ? fs::path{} : normalisedPath(f.filename), std::move(*lf));
 
     if (hasBackup) {
-        // Unsaved text came back from the snapshot: dirty until saved.
+        // Unsaved text came back from the snapshot: dirty until saved, or
+        // with its undo history, until undone to the saved state.
         b.snapshotPath = backup;
-        b.forcedDirty = true;
+        const std::optional<core::UndoState> undo = core::readUndoState(core::undoStatePath(backup));
+        b.forcedDirty = !(undo && t->view->restoreUndoState(*undo) && t->view->isModified());
         b.snapshotStale = false;
         if (!untitled) {
             // Compare against the file as it was when the snapshot was taken,
@@ -1145,7 +1148,9 @@ void MainWindow::snapshotNow()
         if (isModified(*b)) {
             if (b->snapshotStale || !fs::is_regular_file(b->snapshotPath, ec)) {
                 std::string err;
-                if (!core::writeSnapshot(*b, tabsOf(*b).front()->view->text(), &err))
+                const EditorView& v = *tabsOf(*b).front()->view;
+                const std::optional<core::UndoState> undo = v.undoState();
+                if (!core::writeSnapshot(*b, v.text(), undo ? &*undo : nullptr, &err))
                     g_warning("Snapshot of %s failed: %s", b->fullName().c_str(), err.c_str());
             }
         } else if (!b->snapshotPath.empty()) {

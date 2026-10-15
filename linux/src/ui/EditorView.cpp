@@ -524,6 +524,62 @@ void EditorView::setText(std::string_view utf8)
     updateLineNumberWidth();
 }
 
+std::optional<core::UndoState> EditorView::undoState() const
+{
+    core::UndoState s;
+    const int n = static_cast<int>(execute(SCI_GETUNDOACTIONS));
+    std::size_t bytes = 0;
+    s.actions.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) { // in order from 0: Scintilla reads its stack with a cursor
+        core::UndoAction a;
+        a.type = static_cast<int>(execute(SCI_GETUNDOACTIONTYPE, static_cast<uptr_t>(i)));
+        a.position = execute(SCI_GETUNDOACTIONPOSITION, static_cast<uptr_t>(i));
+        const sptr_t len = execute(SCI_GETUNDOACTIONTEXT, static_cast<uptr_t>(i), 0);
+        bytes += static_cast<std::size_t>(len);
+        if (bytes > core::kMaxUndoStateBytes)
+            return std::nullopt;
+        a.text.resize(static_cast<std::size_t>(len));
+        if (len > 0)
+            execute(SCI_GETUNDOACTIONTEXT, static_cast<uptr_t>(i), reinterpret_cast<sptr_t>(a.text.data()));
+        s.actions.push_back(std::move(a));
+    }
+    s.savePoint = static_cast<int>(execute(SCI_GETUNDOSAVEPOINT));
+    s.detach = static_cast<int>(execute(SCI_GETUNDODETACH));
+    s.tentative = static_cast<int>(execute(SCI_GETUNDOTENTATIVE));
+    s.current = static_cast<int>(execute(SCI_GETUNDOCURRENT));
+    const std::string t = text();
+    s.textLength = t.size();
+    s.textHash = core::undoTextHash(t);
+    return s;
+}
+
+bool EditorView::restoreUndoState(const core::UndoState& s)
+{
+    if (s.empty() || !s.fits(text()))
+        return false;
+    // Scintilla's restore sequence: actions, then the points, current last
+    // (it validates the history against the document). A tentative point is
+    // taken as committed, as Scintilla's documentation advises.
+    execute(SCI_EMPTYUNDOBUFFER);
+    for (const core::UndoAction& a : s.actions) {
+        execute(SCI_PUSHUNDOACTIONTYPE, static_cast<uptr_t>(a.type), static_cast<sptr_t>(a.position));
+        execute(SCI_CHANGELASTUNDOACTIONTEXT, a.text.size(), reinterpret_cast<sptr_t>(a.text.data()));
+    }
+    execute(SCI_SETUNDOSAVEPOINT, static_cast<uptr_t>(s.savePoint));
+    execute(SCI_SETUNDODETACH, static_cast<uptr_t>(s.detach));
+    execute(SCI_SETUNDOTENTATIVE, static_cast<uptr_t>(-1));
+    execute(SCI_SETSTATUS, SC_STATUS_OK);
+    execute(SCI_SETUNDOCURRENT, static_cast<uptr_t>(s.current));
+    if (execute(SCI_GETSTATUS) != SC_STATUS_OK) { // Scintilla dropped the history as invalid
+        execute(SCI_SETSTATUS, SC_STATUS_OK);
+        execute(SCI_EMPTYUNDOBUFFER);
+        execute(SCI_SETSAVEPOINT);
+        execute(SCI_SETCHANGEHISTORY, static_cast<uptr_t>(changeHistory_)); // dropped with the history
+        return false;
+    }
+    return true;
+}
+
 void EditorView::applyRepresentations(const Representations& r)
 {
     // Upstream showNpc / showCcUniEol / setCRLF / setNpcAndCcUniEOL.

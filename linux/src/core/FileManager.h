@@ -3,6 +3,7 @@
 #pragma once
 
 #include "core/Buffer.h"
+#include "core/UndoState.h"
 #include "platform/Settings.h"
 
 #include <filesystem>
@@ -47,7 +48,12 @@ bool isSnapshotPath(const std::filesystem::path& p);
 // Writes the buffer's unsaved text to its snapshot file, naming it
 // "<name>@<timestamp>" on first use. Encoded like the buffer, falling back to
 // UTF-8 with BOM when the text does not fit the buffer's encoding.
-bool writeSnapshot(Buffer& buf, std::string_view utf8, std::string* error);
+// `undo`, the editor's undo history, is kept beside it ("<snapshot>.undo");
+// without one any older history file is removed.
+bool writeSnapshot(Buffer& buf, std::string_view utf8, const UndoState* undo, std::string* error);
+// The snapshot and its undo history.
 void deleteSnapshot(Buffer& buf);
+// Removes undo history files whose snapshot is gone (left by a crash).
+void removeOrphanUndoStates();
 
 } // namespace npp::core

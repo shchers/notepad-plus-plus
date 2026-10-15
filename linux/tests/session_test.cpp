@@ -369,6 +369,9 @@ void testSnapshots(GtkApplication* app, const core::LanguageCatalog& langs)
             CHECK(s.views[0][0].filename == "new 1" && core::isSnapshotPath(untitledSnap));
             CHECK(readText(untitledSnap) == "unsaved draft");
             CHECK(!s.views[0][1].backupFilePath.empty() && s.views[0][1].originalFileLastModifTimestamp != 0);
+            // The undo history is kept beside each snapshot.
+            CHECK(fs::exists(core::undoStatePath(untitledSnap)));
+            CHECK(fs::exists(core::undoStatePath(s.views[0][1].backupFilePath)));
         }
         // Snapshot mode closes without asking about unsaved documents.
         CHECK(w->requestQuit());
@@ -384,17 +387,90 @@ void testSnapshots(GtkApplication* app, const core::LanguageCatalog& langs)
         CHECK(w->activeView()->text() == "on disk\nedited ");
         CHECK(w->isModified(*w->activeBuffer()));
         CHECK(readText(f) == "on disk\n"); // the file itself was never touched
+        // The undo history came back with the text: undoing reaches the
+        // saved file, clean again, and redo the edit.
+        CHECK(w->activeView()->execute(SCI_CANUNDO));
+        activate(*w, IDM_EDIT_UNDO);
+        CHECK(w->activeView()->text() == "on disk\n" && !w->isModified(*w->activeBuffer()));
+        activate(*w, IDM_EDIT_REDO);
+        CHECK(w->activeView()->text() == "on disk\nedited " && w->isModified(*w->activeBuffer()));
         // Saving makes it clean and drops its snapshot.
         const fs::path snap = w->activeBuffer()->snapshotPath;
         activate(*w, IDM_FILE_SAVE);
         CHECK(!w->isModified(*w->activeBuffer()) && readText(f) == "on disk\nedited ");
-        CHECK(!fs::exists(snap));
+        CHECK(!fs::exists(snap) && !fs::exists(core::undoStatePath(snap)));
         // Closing the untitled one (answer No) deletes its snapshot.
         activate(*w, IDM_VIEW_TAB_PREV);
         CHECK(w->activeBuffer()->isUntitled() && w->activeView()->text() == "unsaved draft");
+        activate(*w, IDM_EDIT_UNDO);
+        CHECK(w->activeView()->text().empty());
+        activate(*w, IDM_EDIT_REDO);
+        CHECK(w->activeView()->text() == "unsaved draft");
         p.answers = {Answer::No};
         activate(*w, IDM_FILE_CLOSE);
-        CHECK(!fs::exists(untitledSnap));
+        CHECK(!fs::exists(untitledSnap) && !fs::exists(core::undoStatePath(untitledSnap)));
+    }
+    // Every way a document goes away takes its undo history along.
+    {
+        auto w = makeWindow(app, langs, p);
+        w->settings().rememberSession = true;
+        w->settings().snapshot = true;
+        auto dirtyDoc = [&](const char* text) {
+            w->newDocument();
+            typeText(*w, text);
+            w->snapshotNow();
+            const fs::path snap = w->activeBuffer()->snapshotPath;
+            CHECK(fs::exists(snap) && fs::exists(core::undoStatePath(snap)));
+            return snap;
+        };
+        auto gone = [](const fs::path& snap) { return !fs::exists(snap) && !fs::exists(core::undoStatePath(snap)); };
+        // Close, answering No.
+        fs::path s1 = dirtyDoc("one");
+        p.answers = {Answer::No};
+        activate(*w, IDM_FILE_CLOSE);
+        CHECK(gone(s1));
+        // Close All, answering No to each.
+        s1 = dirtyDoc("two");
+        const fs::path s2 = dirtyDoc("three");
+        p.answers = {Answer::No, Answer::No};
+        activate(*w, IDM_FILE_CLOSEALL);
+        CHECK(gone(s1) && gone(s2));
+        // Undone back to unmodified: the next tick drops both.
+        s1 = dirtyDoc("x");
+        activate(*w, IDM_EDIT_UNDO);
+        CHECK(!w->isModified(*w->activeBuffer()));
+        w->snapshotNow();
+        CHECK(gone(s1));
+        // A history left without its snapshot (a crash) is swept at start.
+        const fs::path orphan = core::undoStatePath(core::snapshotDir() / "lost@2026-01-01_000000");
+        writeText(orphan, "x");
+        w->restoreLastSession();
+        CHECK(!fs::exists(orphan));
+        fs::remove(ui::MainWindow::lastSessionPath());
+    }
+    // An undo history that does not match its snapshot is ignored: the text
+    // comes back, dirty, without undo.
+    {
+        fs::remove(ui::MainWindow::lastSessionPath());
+        fs::path snap;
+        {
+            auto w = makeWindow(app, langs, p);
+            w->settings().rememberSession = true;
+            w->settings().snapshot = true;
+            w->restoreLastSession();
+            w->newDocument();
+            typeText(*w, "draft");
+            CHECK(w->requestQuit());
+            snap = w->activeBuffer()->snapshotPath;
+        }
+        writeText(snap, "drafts"); // changed behind the history's back
+        auto w = makeWindow(app, langs, p);
+        w->settings().rememberSession = true;
+        w->settings().snapshot = true;
+        w->restoreLastSession();
+        CHECK(w->activeView()->text() == "drafts" && w->isModified(*w->activeBuffer()));
+        CHECK(!w->activeView()->execute(SCI_CANUNDO));
+        fs::remove(ui::MainWindow::lastSessionPath());
     }
     // Without snapshots, quitting asks about unsaved documents.
     {
