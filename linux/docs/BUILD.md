@@ -211,6 +211,11 @@ unset `DISPLAY` so CTest uses `xvfb-run`.
 **Toolbar icons missing / `Could not load a pixbuf ... .svg`**: install
 `adwaita-icon-theme librsvg2-common` (the `.deb` recommends both).
 
+**Generic window icon on Wayland**: the compositor finds the icon through the
+desktop file named after the window's app ID,
+`org.notepad_plus_plus.NotepadPlusPlusGtk.desktop` (installed with the
+package). A build run from the build tree has no installed desktop file.
+
 **View > Terminal only shows "The terminal needs the VTE library"**: install
 VTE for GTK 3 (`libvte-2.91-0` on Debian and Ubuntu, `vte291` on Fedora,
 `vte3` on Arch). It is loaded at run time, so no rebuild is needed.

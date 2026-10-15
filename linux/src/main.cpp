@@ -247,7 +247,10 @@ int main(int argc, char** argv)
                 }
     }
 
-    g_set_prgname(NPP_EXE_NAME);
+    // The application ID names the desktop file and the icon: Wayland
+    // compositors find them by the window's app_id and X11 ones by WM_CLASS,
+    // which GTK both takes from the program name.
+    g_set_prgname(NPP_APP_ID);
     g_set_application_name("Notepad++");
 
     GtkApplication* gapp = nullptr;
