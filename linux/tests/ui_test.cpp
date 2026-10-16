@@ -80,6 +80,17 @@ bool waitFor(F cond, int ms = 5000)
     return true;
 }
 
+// GTK lays widgets out on its next frame, which may come after pump() has
+// found nothing to do; until then allocations are -1,-1 1x1.
+bool laidOut(GtkWidget* w)
+{
+    return waitFor([w] {
+        GtkAllocation a;
+        gtk_widget_get_allocation(w, &a);
+        return a.width > 1 && a.height > 1;
+    });
+}
+
 struct Prompter {
     std::deque<Answer> answers;
     std::vector<std::string> asked;
@@ -614,6 +625,7 @@ void testTabStripDoubleClick(GtkApplication* app, core::LanguageCatalog& langs)
         pump();
         const std::size_t before = w->tabCount(ui::MainWindow::kMainView);
         GtkWidget* lastLabel = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, gtk_notebook_get_n_pages(nb) - 1));
+        CHECK(laidOut(lastLabel));
         GtkAllocation l, n;
         gtk_widget_get_allocation(lastLabel, &l);
         gtk_widget_get_allocation(GTK_WIDGET(nb), &n);
@@ -677,11 +689,12 @@ void testTabStripScroll(GtkApplication* app, core::LanguageCatalog& langs)
     };
     auto current = [&] { return gtk_notebook_get_current_page(nb); };
     GtkWidget* label = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, 0));
+    gtk_notebook_set_current_page(nb, n - 1);
+    pump();
+    CHECK(laidOut(label) && laidOut(gtk_notebook_get_nth_page(nb, n - 1)));
     GtkAllocation l, c;
     gtk_widget_get_allocation(label, &l);
     const int x = l.x + l.width / 2, y = l.y + l.height / 2;
-    gtk_notebook_set_current_page(nb, n - 1);
-    pump();
     // In the document: left to the editor.
     gtk_widget_get_allocation(gtk_notebook_get_nth_page(nb, current()), &c);
     CHECK(!wheel(c.x + c.width / 2, c.y + c.height / 2, GDK_SCROLL_UP));

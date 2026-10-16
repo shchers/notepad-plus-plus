@@ -100,7 +100,9 @@ GdkPixbuf* sized(GdkPixbuf* pb, int px, GdkInterpType interp)
 }
 
 // The .ico's entry nearest `px` (exact, else the smallest larger, else the
-// largest), on its own: GdkPixbuf's ICO loader would pick one by itself.
+// largest). Upstream's entries are PNG, decoded by GdkPixbuf's built-in PNG
+// loader: its ICO and BMP loaders are optional (Ubuntu ships them in
+// Recommends, GdkPixbuf 2.44 hands them to glycin) and may be missing.
 GdkPixbuf* loadIco(const std::vector<unsigned char>& d, int px)
 {
     if (d.size() < 6 || u16(d.data() + 2) != 1)
@@ -124,7 +126,10 @@ GdkPixbuf* loadIco(const std::vector<unsigned char>& d, int px)
     const std::uint32_t len = u32(e + 8), off = u32(e + 12);
     if (off > d.size() || len > d.size() - off)
         return nullptr;
-    // A one-entry .ico around that image.
+    static const unsigned char kPng[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    if (len >= sizeof kPng && std::memcmp(d.data() + off, kPng, sizeof kPng) == 0)
+        return sized(fromBytes(d.data() + off, len), px, GDK_INTERP_HYPER);
+    // A BMP entry: a one-entry .ico around it for GdkPixbuf's ICO loader.
     std::vector<unsigned char> one(d.begin(), d.begin() + 6);
     one[4] = 1;
     one[5] = 0;
@@ -136,14 +141,57 @@ GdkPixbuf* loadIco(const std::vector<unsigned char>& d, int px)
     return sized(fromBytes(one.data(), one.size()), px, GDK_INTERP_HYPER);
 }
 
+// An uncompressed 1/4/8/24/32-bit .bmp, decoded here for the same reason,
+// with upstream's grey background (192,192,192, LR_LOADMAP3DCOLORS)
+// transparent. 32-bit pixels are taken as opaque, as the Win32 toolbar does.
 GdkPixbuf* loadBmp(const std::vector<unsigned char>& d, int px)
 {
-    GdkPixbuf* pb = fromBytes(d.data(), d.size());
+    if (d.size() < 54)
+        return nullptr;
+    const std::uint32_t dataOff = u32(d.data() + 10), hdr = u32(d.data() + 14);
+    const std::int32_t w = static_cast<std::int32_t>(u32(d.data() + 18)), h = static_cast<std::int32_t>(u32(d.data() + 22));
+    const int bpp = u16(d.data() + 28);
+    const std::uint32_t comp = u32(d.data() + 30);
+    const int height = h < 0 ? -h : h;
+    if (hdr < 40 || comp != 0 || w <= 0 || w > 4096 || height == 0 || height > 4096 ||
+        (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24 && bpp != 32))
+        return nullptr;
+    std::uint32_t colours = u32(d.data() + 46);
+    if (bpp <= 8 && colours == 0)
+        colours = 1u << bpp;
+    const std::size_t palOff = 14 + hdr;
+    const std::size_t stride = ((static_cast<std::size_t>(w) * bpp + 31) / 32) * 4;
+    if (bpp <= 8 && (colours > 256 || palOff + 4u * colours > d.size()))
+        return nullptr;
+    if (dataOff > d.size() || stride * height > d.size() - dataOff)
+        return nullptr;
+    GdkPixbuf* pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, w, height);
     if (!pb)
         return nullptr;
-    GdkPixbuf* a = gdk_pixbuf_add_alpha(pb, TRUE, 192, 192, 192);
-    g_object_unref(pb);
-    return sized(a, px, GDK_INTERP_NEAREST); // pixel art: no blur
+    const int rs = gdk_pixbuf_get_rowstride(pb);
+    guchar* out = gdk_pixbuf_get_pixels(pb);
+    for (int y = 0; y < height; ++y) {
+        const unsigned char* row = d.data() + dataOff + stride * static_cast<std::size_t>(h < 0 ? y : height - 1 - y);
+        guchar* o = out + static_cast<std::ptrdiff_t>(y) * rs;
+        for (int x = 0; x < w; ++x, o += 4) {
+            const unsigned char* bgr;
+            if (bpp <= 8) {
+                const std::size_t bit = static_cast<std::size_t>(x) * bpp;
+                const unsigned idx = (row[bit / 8] >> (8 - bpp - bit % 8)) & ((1u << bpp) - 1);
+                if (idx >= colours)
+                    bgr = d.data() + palOff; // out of the palette: its first colour
+                else
+                    bgr = d.data() + palOff + 4 * idx;
+            } else {
+                bgr = row + static_cast<std::size_t>(x) * (bpp / 8);
+            }
+            o[0] = bgr[2];
+            o[1] = bgr[1];
+            o[2] = bgr[0];
+            o[3] = (bgr[2] == 192 && bgr[1] == 192 && bgr[0] == 192) ? 0 : 255;
+        }
+    }
+    return sized(pb, px, GDK_INTERP_NEAREST); // pixel art: no blur
 }
 
 } // namespace
