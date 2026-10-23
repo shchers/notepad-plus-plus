@@ -48,4 +48,9 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)
 set(CPACK_SOURCE_GENERATOR "TGZ")
 set(CPACK_SOURCE_IGNORE_FILES "/build/;/\\\\.git/;/obj-;/debian/\\\\.debhelper/")
 
+# Directories CPack creates implicitly while staging (usr/, usr/share/, ...)
+# take the builder's umask; with 0027 they are drwxr-x--- and users cannot
+# read the installed data. Normalise the staging tree before archiving.
+set(CPACK_PRE_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FixStagingPermissions.cmake")
+
 include(CPack)
