@@ -316,7 +316,11 @@ one. The 44 fixtures of upstream's own unit test
 exactly upstream's expected JSON. The preinstalled Markdown UDL lists its
 headings (`functionList/markdown.xml`, ATX and Setext, skipping fenced
 code, HTML comments and front matter), added to the upstream tree like
-the Device Tree rules.
+the Device Tree rules. The port's panel shows them as an outline: each
+heading under the last one of a higher level, Sort ordering each level,
+the filter keeping matches under their nearest shown parent (upstream's
+panel would list them flat; the parse results, and so the fixtures, are
+upstream's).
 
 **Folder as Workspace and Project Panels**: folders are listed lazily and
 refreshed through `GFileMonitor`, and the roots, expanded folders and

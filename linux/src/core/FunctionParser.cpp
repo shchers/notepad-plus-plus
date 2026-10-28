@@ -6,6 +6,7 @@
 
 #include <pugixml.hpp>
 
+#include <algorithm>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -356,12 +357,38 @@ FunctionParser* FunctionParsers::parserFor(const std::string& langName, const st
     return it->second.get();
 }
 
+namespace {
+
+// The level of the Markdown heading whose name is at `pos`: the number of
+// '#'s, or for a Setext heading 1 when underlined with '=', 2 with '-'.
+int markdownHeadingLevel(const Sci& sci, sptr_t pos)
+{
+    const sptr_t line = sci.lineOf(pos);
+    const std::string text = sci.lineText(line);
+    std::size_t i = text.find_first_not_of(" \t");
+    if (i != std::string::npos && text[i] == '#') {
+        int level = 0;
+        while (i < text.size() && text[i] == '#')
+            ++level, ++i;
+        return std::min(level, 6);
+    }
+    const std::string next = sci.lineText(line + 1);
+    const std::size_t j = next.find_first_not_of(" \t");
+    return j != std::string::npos && next[j] == '=' ? 1 : 2;
+}
+
+} // namespace
+
 bool FunctionParsers::parse(const Sci& sci, const std::string& langName, const std::string& udlName, std::vector<FunctionInfo>& out)
 {
     FunctionParser* p = parserFor(langName, udlName);
     if (!p)
         return false;
     p->parse(sci, out, 0, sci.length());
+    // Port: Markdown headings nest by level in the panel (upstream lists them flat).
+    if (p->id() == "markdown_heading")
+        for (FunctionInfo& fi : out)
+            fi.level = markdownHeadingLevel(sci, fi.pos);
     return true;
 }
 

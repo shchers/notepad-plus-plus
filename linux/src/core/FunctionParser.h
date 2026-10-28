@@ -22,6 +22,7 @@ struct FunctionInfo {
     std::string className;  // _data2: enclosing class / struct / namespace, if any
     sptr_t pos = -1;        // where the name was found
     sptr_t classPos = -1;   // where the class name was found, -1 if inherited from a zone
+    int level = 0;          // port: outline level (Markdown heading 1-6), 0 for none
 };
 
 class FunctionParser {

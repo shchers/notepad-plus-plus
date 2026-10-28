@@ -129,7 +129,6 @@ void FunctionListPanel::rebuild()
         std::sort(nodes.begin(), nodes.end(), [](const auto& a, const auto& b) { return g_utf8_collate(a.first.c_str(), b.first.c_str()) < 0; });
         for (auto& n : nodes)
             std::stable_sort(n.second.begin(), n.second.end(), byName);
-        std::stable_sort(leaves.begin(), leaves.end(), byName);
     }
     GtkTreeIter root, node, leaf;
     gtk_tree_store_insert_with_values(store_, &root, nullptr, -1, kColText, root_.c_str(), kColPos, gint64{-1}, -1);
@@ -138,8 +137,32 @@ void FunctionListPanel::rebuild()
         for (const core::FunctionInfo* f : funcs)
             gtk_tree_store_insert_with_values(store_, &leaf, &node, -1, kColText, f->name.c_str(), kColPos, static_cast<gint64>(f->pos), -1);
     }
-    for (const core::FunctionInfo* f : leaves)
-        gtk_tree_store_insert_with_values(store_, &leaf, &root, -1, kColText, f->name.c_str(), kColPos, static_cast<gint64>(f->pos), -1);
+    // Port: an outline (Markdown headings) nests each entry under the last one
+    // of a higher level; sorting sorts each level's entries, a filter keeps
+    // the matches under their nearest shown parent.
+    struct Outline {
+        const core::FunctionInfo* info = nullptr;
+        std::vector<Outline> children;
+    };
+    Outline top;
+    std::vector<Outline*> path{&top};
+    for (const core::FunctionInfo* f : leaves) {
+        while (path.size() > 1 && path.back()->info->level >= f->level)
+            path.pop_back();
+        path.back()->children.push_back({f, {}});
+        if (f->level > 0)
+            path.push_back(&path.back()->children.back());
+    }
+    std::function<void(Outline&, GtkTreeIter*)> add = [&](Outline& o, GtkTreeIter* parent) {
+        if (sorted)
+            std::stable_sort(o.children.begin(), o.children.end(), [&](const Outline& a, const Outline& b) { return byName(a.info, b.info); });
+        for (Outline& c : o.children) {
+            GtkTreeIter it;
+            gtk_tree_store_insert_with_values(store_, &it, parent, -1, kColText, c.info->name.c_str(), kColPos, static_cast<gint64>(c.info->pos), -1);
+            add(c, &it);
+        }
+    };
+    add(top, &root);
     gtk_tree_view_expand_all(GTK_TREE_VIEW(tree_));
 }
 

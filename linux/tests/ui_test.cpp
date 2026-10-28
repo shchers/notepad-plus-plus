@@ -941,6 +941,22 @@ void testPanels(GtkApplication* app, core::LanguageCatalog& langs)
     v.execute(SCI_ADDTEXT, 16, reinterpret_cast<sptr_t>("void extra() {}\n"));
     CHECK(waitFor([&] { return w->functionList().dump().find("extra") != std::string::npos; }));
 
+    // Markdown headings nest by level (port; upstream lists them flat).
+    const fs::path md = g_dir / "panels" / "notes.md";
+    writeText(md, "# Guide\n\n## Install\n\n### Linux\n\n## Use\n\nNotes\n-----\n\n# Appendix\n\n#### Deep\n");
+    CHECK(w->openFiles({md}) == 1);
+    g_action_group_change_action_state(G_ACTION_GROUP(w->window()), "language", g_variant_new_string("udl:Markdown (preinstalled)"));
+    w->functionList().setSorted(false);
+    w->functionList().reload();
+    CHECK(w->functionList().dump() == "notes.md\n  Guide\n    Install\n      Linux\n    Use\n    Notes\n  Appendix\n    Deep\n");
+    w->functionList().setSorted(true); // within each level
+    CHECK(w->functionList().dump() == "notes.md\n  Appendix\n    Deep\n  Guide\n    Install\n      Linux\n    Notes\n    Use\n");
+    w->functionList().setFilter("in");
+    CHECK(w->functionList().dump() == "notes.md\n  Install\n    Linux\n");
+    w->functionList().setFilter("");
+    w->functionList().setSorted(false);
+    CHECK(w->runCommand(IDM_FILE_CLOSE));
+
     // Document Map: shares the document, marks the visible part, scrolls the editor.
     std::string big;
     for (int i = 0; i < 400; ++i)
