@@ -415,6 +415,7 @@ bool SftpClient::pump(Done done)
         const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline_ - Clock::now()).count();
         if (left <= 0) {
             abort();
+            aborted_ = false; // a timeout, not the user: worth a reconnect
             return childGone("the server did not answer in " + std::to_string(profile_.timeout) + " s");
         }
         pollfd p[3] = {{out_, POLLIN, 0}, {err_, POLLIN, 0}, {pty_, POLLIN, 0}};
