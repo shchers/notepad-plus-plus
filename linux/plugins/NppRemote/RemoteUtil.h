@@ -39,6 +39,15 @@ bool parseSftpLsLine(const std::string& line, Entry& e, std::time_t now);
 // (line breaks).
 bool sftpQuote(const std::string& arg, std::string& out);
 
+// ---- Shell link: POSIX sh on the server ----
+
+// One argument for sh: 'it'\''s' (any bytes but NUL).
+std::string shellQuote(const std::string& arg);
+// A command that writes `data` to `path` with printf only (a shell builtin
+// almost everywhere, so no ARG_MAX), in place to keep the file's mode and
+// owner. Its status is 0 when everything was written.
+std::string shellWriteScript(const std::string& data, const std::string& path);
+
 // ---- Remote paths ('/' separated, absolute) ----
 
 std::string joinPath(const std::string& dir, const std::string& name);

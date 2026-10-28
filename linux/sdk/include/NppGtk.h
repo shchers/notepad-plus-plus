@@ -51,9 +51,31 @@
 
 	#define NPPM_GTKGETPORTVERSION (NPPM_GTKBASE + 3)
 	// int NPPM_GTKGETPORTVERSION(0, 0)
-	// Version of this extension interface (1). 0 from any other host.
+	// Version of this extension interface (2). 0 from any other host.
 
-#define NPPGTK_INTERFACE_VERSION 1
+	// Since version 2: a plugin that keeps files elsewhere (a server, an
+	// archive) can store a document there before Notepad++ saves it, and stop
+	// the save when that fails, so the tab stays modified. All three are for
+	// use while handling NPPN_FILEBEFORESAVE.
+
+	#define NPPM_GTKGETSAVETARGET (NPPM_GTKBASE + 4)
+	// int NPPM_GTKGETSAVETARGET(UINT_PTR bufferID, wchar_t* path)
+	// The file the save writes: the buffer's own, or the new name of a Save As.
+	// Returns its length; path (NULL to ask for the length) receives it. 0 when
+	// bufferID is not being saved.
+
+	#define NPPM_GTKWRITEBUFFER (NPPM_GTKBASE + 5)
+	// BOOL NPPM_GTKWRITEBUFFER(UINT_PTR bufferID, const wchar_t* path)
+	// Writes the document's bytes, as a save would (encoding, BOM), to path.
+	// The document keeps its name and modified state.
+
+	#define NPPM_GTKCANCELSAVE (NPPM_GTKBASE + 6)
+	// BOOL NPPM_GTKCANCELSAVE(UINT_PTR bufferID, 0)
+	// Stops the save in progress: nothing is written, the document stays
+	// modified, Notepad++ shows no message (the plugin says why), and
+	// NPPN_FILESAVED is not sent. FALSE when bufferID is not being saved.
+
+#define NPPGTK_INTERFACE_VERSION 2
 
 // Optional: the version Plugins Admin shows (Windows reads the DLL's version
 // resource, which a .so does not have). Use once, at file scope:

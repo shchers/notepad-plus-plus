@@ -1,4 +1,4 @@
-# NppRemote — remote files over FTP and SFTP (see NppRemote.cpp).
+# NppRemote — remote files over FTP, SFTP and a shell link (see NppRemote.cpp).
 #
 # nppremote_proto holds everything but the plugin entry points and the
 # panel, so the tests use the clients without Notepad++.
@@ -6,7 +6,9 @@
 add_library(nppremote_proto STATIC
   RemoteUtil.cpp
   FtpClient.cpp
+  SshProcess.cpp
   SftpClient.cpp
+  ShellClient.cpp
   Profiles.cpp
   Session.cpp)
 set_target_properties(nppremote_proto PROPERTIES CXX_VISIBILITY_PRESET hidden)

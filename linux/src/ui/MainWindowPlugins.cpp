@@ -947,6 +947,30 @@ sptr_t MainWindow::pluginMessage(unsigned msg, uptr_t wParam, sptr_t lParam)
     }
     case NPPM_GTKGETPORTVERSION:
         return NPPGTK_INTERFACE_VERSION;
+    case NPPM_GTKGETSAVETARGET: {
+        core::Buffer* b = bufferFromId(wParam);
+        if (!b || b != savingBuffer_)
+            return 0;
+        const std::wstring w = toWide(saveTarget_.string());
+        if (lParam)
+            std::wmemcpy(reinterpret_cast<wchar_t*>(lParam), w.c_str(), w.size() + 1);
+        return static_cast<sptr_t>(w.size());
+    }
+    case NPPM_GTKWRITEBUFFER: {
+        core::Buffer* b = bufferFromId(wParam);
+        if (!b || !lParam || tabsOf(*b).empty())
+            return FALSE;
+        std::string err;
+        bool unrepresentable = false;
+        return core::saveFile(fs::path(str(lParam)), tabsOf(*b).front()->view->text(), b->encoding, &err, &unrepresentable) ? TRUE : FALSE;
+    }
+    case NPPM_GTKCANCELSAVE: {
+        core::Buffer* b = bufferFromId(wParam);
+        if (!b || b != savingBuffer_)
+            return FALSE;
+        saveCancelled_ = true;
+        return TRUE;
+    }
 
     // ---- Editors ----------------------------------------------------------------------
     case NPPM_CREATESCINTILLAHANDLE: {

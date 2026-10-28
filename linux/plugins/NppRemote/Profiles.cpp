@@ -66,7 +66,8 @@ bool loadSettings(const std::string& file, Settings& s)
         p.name = getString(kf, g, "Name");
         if (p.name.empty())
             continue;
-        p.protocol = getString(kf, g, "Protocol") == "ftp" ? Protocol::Ftp : Protocol::Sftp;
+        const std::string protocol = getString(kf, g, "Protocol");
+        p.protocol = protocol == "ftp" ? Protocol::Ftp : protocol == "shell" ? Protocol::Shell : Protocol::Sftp;
         p.host = getString(kf, g, "Host");
         p.port = getInt(kf, g, "Port", 0);
         p.user = getString(kf, g, "User");
@@ -95,7 +96,9 @@ bool saveSettings(const std::string& file, const Settings& s, std::string& error
     for (const Profile& p : s.profiles) {
         const std::string g = "Profile " + std::to_string(++i);
         g_key_file_set_string(kf, g.c_str(), "Name", p.name.c_str());
-        g_key_file_set_string(kf, g.c_str(), "Protocol", p.protocol == Protocol::Ftp ? "ftp" : "sftp");
+        g_key_file_set_string(kf, g.c_str(), "Protocol", p.protocol == Protocol::Ftp     ? "ftp"
+                                                       : p.protocol == Protocol::Shell ? "shell"
+                                                                                       : "sftp");
         g_key_file_set_string(kf, g.c_str(), "Host", p.host.c_str());
         g_key_file_set_integer(kf, g.c_str(), "Port", p.port);
         g_key_file_set_string(kf, g.c_str(), "User", p.user.c_str());

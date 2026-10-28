@@ -536,6 +536,11 @@ private:
     std::map<int, GtkToolItem*> pluginButtons_;    // plugin command -> toolbar button
     std::map<int, std::pair<std::string, std::string>> pluginIcons_; // command -> (icon, dark icon)
     const core::Buffer* activatedBuffer_ = nullptr; // last NPPN_BUFFERACTIVATED
+    // During NPPN_FILEBEFORESAVE: the buffer, where it goes, and whether a
+    // plugin stopped it (NPPM_GTKGETSAVETARGET, NPPM_GTKCANCELSAVE).
+    const core::Buffer* savingBuffer_ = nullptr;
+    std::filesystem::path saveTarget_;
+    bool saveCancelled_ = false;
     std::string cmdLine_;
     std::filesystem::path exitSessionFile_;
     std::wstring pluginMessageArg_;               // -pluginMessage, alive while plugins may read it

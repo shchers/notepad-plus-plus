@@ -38,7 +38,7 @@ Description: Notepad++ source code editor - native GTK 3 port (preview)
  .
  Plugins use Notepad++'s plugin interface, rebuilt for Linux with the SDK in
  notepad-plus-plus-gtk-dev. The bundled Remote Files plugin edits files on FTP
- and SFTP servers (SFTP through openssh-client). Auto-completion, smart
+ and SFTP servers, or over an ssh shell link (both through openssh-client). Auto-completion, smart
  highlighting and the other Preferences work as in Notepad++.
 
 Package: notepad-plus-plus-gtk-dev

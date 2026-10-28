@@ -348,6 +348,48 @@ bool sftpQuote(const std::string& arg, std::string& out)
     return true;
 }
 
+std::string shellQuote(const std::string& arg)
+{
+    std::string out = "'";
+    for (char c : arg) {
+        if (c == '\'')
+            out += "'\\''";
+        else
+            out += c;
+    }
+    return out + "'";
+}
+
+std::string shellWriteScript(const std::string& data, const std::string& path)
+{
+    // Printable bytes as they are, the rest as three-digit octal escapes
+    // (POSIX printf). '%' doubles; '\'' ends the quotes, so it is escaped, as
+    // are '\\' and a leading '-' (an option to some printf).
+    static const std::size_t kLine = 8192;
+    std::string script = "{ nppst=0\n";
+    std::string line;
+    auto flush = [&] {
+        if (!line.empty())
+            script += "printf '" + line + "' || nppst=1\n";
+        line.clear();
+    };
+    for (unsigned char c : data) {
+        if (c == '%') {
+            line += "%%";
+        } else if ((c >= 0x20 && c < 0x7f && c != '\'' && c != '\\' && !(c == '-' && line.empty())) || c >= 0x80) {
+            line += static_cast<char>(c);
+        } else {
+            char esc[5];
+            std::snprintf(esc, sizeof esc, "\\%03o", c);
+            line += esc;
+        }
+        if (line.size() >= kLine)
+            flush();
+    }
+    flush();
+    return script + "test $nppst = 0; } > " + shellQuote(path) + " </dev/null";
+}
+
 std::string joinPath(const std::string& dir, const std::string& name)
 {
     if (dir.empty())

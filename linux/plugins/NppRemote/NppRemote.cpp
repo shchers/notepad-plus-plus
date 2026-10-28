@@ -1,7 +1,7 @@
-// NppRemote — remote files over FTP and SFTP, in the spirit of NppFTP:
+// NppRemote — remote files over FTP, SFTP and a shell link, in the spirit of NppFTP:
 // browse a server in a docked panel, open its files in Notepad++ and send
 // them back on save. Bundled with the GTK port; built only on the plugin
-// SDK, GTK and POSIX (sockets, a pseudo-terminal for OpenSSH's sftp).
+// SDK, GTK and POSIX (sockets, a pseudo-terminal for OpenSSH's sftp and ssh).
 
 #include <windows.h>
 #include "PluginInterface.h"
@@ -84,8 +84,9 @@ void about()
                  L"Edit files on FTP and SFTP servers, in the spirit of NppFTP.\n\n"
                  L"Double-click a file to open it; saving it uploads it again. "
                  L"Downloaded files are kept in ~/.cache/notepad-plus-plus-gtk/NppRemote.\n\n"
-                 L"FTP is built in. SFTP uses the system's OpenSSH client (sftp), "
-                 L"so ~/.ssh/config, keys and ssh-agent apply. FTPS is not supported.",
+                 L"FTP is built in. SFTP uses the system's OpenSSH client (sftp), and the shell link, "
+                 L"as in Midnight Commander, its ssh with plain shell commands on the server (for hosts without SFTP); "
+                 L"~/.ssh/config, keys and ssh-agent apply. FTPS is not supported.",
                  L"Remote Files", MB_OK | MB_ICONINFORMATION);
 }
 
@@ -125,6 +126,11 @@ extern "C" __declspec(dllexport) void beNotified(SCNotification* n)
     switch (n->nmhdr.code) {
     case NPPN_TBMODIFICATION:
         ::SendMessage(npp._nppHandle, NPPM_ADDTOOLBARICON_FORDARKMODE, funcItems[kPanelCommand]._cmdID, reinterpret_cast<LPARAM>(&toolbarButton));
+        break;
+    case NPPN_FILEBEFORESAVE:
+        // Upload first, and stop the save when that fails (port extension).
+        if (::SendMessage(npp._nppHandle, NPPM_GTKGETPORTVERSION, 0, 0) >= 2)
+            thePanel().beforeSave(n->nmhdr.idFrom);
         break;
     case NPPN_FILESAVED: {
         // Also a cached file reopened from the last session, before the

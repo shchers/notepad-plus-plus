@@ -15,6 +15,7 @@
 #include <cstring>
 #include <set>
 #include <system_error>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -735,8 +736,20 @@ bool MainWindow::save(core::Buffer& b, bool saveAs, const fs::path& to)
         }
     }
 
-    // A plugin may still change the text (trim trailing blanks...).
-    notifyPlugins(NPPN_FILEBEFORESAVE, &b);
+    // A plugin may still change the text (trim trailing blanks...), or
+    // store it elsewhere first and stop the save (NPPM_GTKCANCELSAVE).
+    {
+        const core::Buffer* outerBuffer = std::exchange(savingBuffer_, &b);
+        fs::path outerTarget = std::exchange(saveTarget_, target);
+        const bool outerCancelled = std::exchange(saveCancelled_, false);
+        notifyPlugins(NPPN_FILEBEFORESAVE, &b);
+        const bool cancelled = saveCancelled_;
+        savingBuffer_ = outerBuffer;
+        saveTarget_ = std::move(outerTarget);
+        saveCancelled_ = outerCancelled;
+        if (cancelled || tabsOf(b).empty())
+            return false;
+    }
     std::string err;
     if (!core::backupBeforeSave(target, settings_.saveBackup, settings_.saveBackupDir, &err)) {
         if (ask("The previous version of the file could not be saved into the backup directory.",

@@ -215,7 +215,10 @@ Port-only messages (`NppGtk.h`, `NPPM_GTKBASE` + n):
 |---|---|
 | `NPPM_GTKGETMAINWINDOW(0, 0)` | The main `GtkWindow*`. |
 | `NPPM_GTKGETSCINTILLAWIDGET(0, HWND)` | The Scintilla widget behind a handle; for a view handle, the editor shown now (do not keep it). |
-| `NPPM_GTKGETPORTVERSION(0, 0)` | 1 (`NPPGTK_INTERFACE_VERSION`); 0 on Windows. |
+| `NPPM_GTKGETPORTVERSION(0, 0)` | 2 (`NPPGTK_INTERFACE_VERSION`); 0 on Windows. |
+| `NPPM_GTKGETSAVETARGET(bufferID, wchar_t*)` | Since 2, in `NPPN_FILEBEFORESAVE`: the file being written (a Save As's new name); its length, 0 when that buffer is not being saved. |
+| `NPPM_GTKWRITEBUFFER(bufferID, const wchar_t*)` | Since 2: writes the document's bytes as a save would (encoding, BOM) to another file; the document keeps its name and state. |
+| `NPPM_GTKCANCELSAVE(bufferID, 0)` | Since 2, in `NPPN_FILEBEFORESAVE`: stops the save. Nothing is written, the tab stays modified, no message (the plugin gives one), no `NPPN_FILESAVED`. For plugins that store the file elsewhere first (Remote Files uploads it). |
 
 ## 6. Notifications
 

@@ -11,7 +11,9 @@
 
 namespace nppremote {
 
-enum class Protocol { Ftp, Sftp };
+// Shell: a shell link, as in Midnight Commander (FISH): ssh runs /bin/sh on
+// the server, files go through plain shell commands.
+enum class Protocol { Ftp, Sftp, Shell };
 
 struct Profile {
     std::string name;
@@ -23,8 +25,8 @@ struct Profile {
     bool savePassword = false;
     std::string initialDir;   // empty: where the server puts us
     bool activeMode = false;  // FTP: PORT/EPRT instead of PASV/EPSV
-    std::string identityFile; // SFTP: -i
-    std::string sftpOptions;  // SFTP: more arguments, e.g. "-o ProxyJump=gw -F ~/.ssh/other"
+    std::string identityFile; // SFTP, shell link: -i
+    std::string sftpOptions;  // SFTP, shell link: more ssh arguments, e.g. "-o ProxyJump=gw -F ~/.ssh/other"
     int timeout = 30;         // seconds
 
     int effectivePort() const { return port > 0 ? port : protocol == Protocol::Ftp ? 21 : 22; }
@@ -94,10 +96,18 @@ protected:
 
 std::unique_ptr<RemoteClient> makeFtpClient(const Profile& p, const ClientHooks& hooks);
 std::unique_ptr<RemoteClient> makeSftpClient(const Profile& p, const ClientHooks& hooks);
+std::unique_ptr<RemoteClient> makeShellClient(const Profile& p, const ClientHooks& hooks);
 
 inline std::unique_ptr<RemoteClient> makeClient(const Profile& p, const ClientHooks& hooks)
 {
-    return p.protocol == Protocol::Ftp ? makeFtpClient(p, hooks) : makeSftpClient(p, hooks);
+    switch (p.protocol) {
+    case Protocol::Ftp:
+        return makeFtpClient(p, hooks);
+    case Protocol::Shell:
+        return makeShellClient(p, hooks);
+    default:
+        return makeSftpClient(p, hooks);
+    }
 }
 
 } // namespace nppremote

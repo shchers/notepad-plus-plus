@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace npp;
@@ -89,6 +90,26 @@ GtkTreePath* findRow(GtkTreeView* tv, const std::string& name)
     return s.path;
 }
 
+// Answers the plugin's message dialogs (they run their own loop), keeping
+// "<text>: <secondary text>".
+gboolean closeMessageDialogs(gpointer data)
+{
+    auto* seen = static_cast<std::vector<std::string>*>(data);
+    GList* windows = gtk_window_list_toplevels();
+    for (GList* l = windows; l; l = l->next) {
+        if (!GTK_IS_MESSAGE_DIALOG(l->data) || !gtk_widget_get_visible(GTK_WIDGET(l->data)))
+            continue;
+        gchar *text = nullptr, *secondary = nullptr;
+        g_object_get(l->data, "text", &text, "secondary-text", &secondary, nullptr);
+        seen->push_back(std::string(text ? text : "") + ": " + (secondary ? secondary : ""));
+        g_free(text);
+        g_free(secondary);
+        gtk_dialog_response(GTK_DIALOG(l->data), GTK_RESPONSE_CLOSE);
+    }
+    g_list_free(windows);
+    return G_SOURCE_CONTINUE;
+}
+
 std::string activePath(ui::MainWindow& w)
 {
     return w.activeBuffer() ? w.activeBuffer()->fullName() : std::string();
@@ -136,6 +157,8 @@ int main(int argc, char** argv)
         w->pluginsReady();
         pump();
         CHECK(w->plugins() && w->plugins()->commands().size() >= 5);
+        std::vector<std::string> errors;
+        const guint dialogTimer = g_timeout_add(20, closeMessageDialogs, &errors);
 
         std::printf("saving a cached file uploads it...\n");
         const fs::path cache = tmp / "cache" / "notepad-plus-plus-gtk" / "NppRemote" / "Test Server";
@@ -173,10 +196,34 @@ int main(int argc, char** argv)
             std::printf("saving it sends it back...\n");
             w->activeView()->execute(SCI_APPENDTEXT, 6, reinterpret_cast<sptr_t>("Edit.\n"));
             CHECK(w->pluginMessage(NPPM_SAVECURRENTFILE, 0, 0) == TRUE);
-            CHECK(waitFor([&] { return fake_ftp::readAll(server / "docs" / "readme.md") == "# Read me\nEdit.\n"; }));
+            // Uploaded before the save returned.
+            CHECK(fake_ftp::readAll(server / "docs" / "readme.md") == "# Read me\nEdit.\n");
+            CHECK(fake_ftp::readAll(local) == "# Read me\nEdit.\n");
+            CHECK(!w->isModified(*w->activeBuffer()));
+
+            std::printf("a refused upload is not saved...\n");
+            fs::permissions(server / "docs" / "readme.md", fs::perms::owner_read);
+            errors.clear();
+            w->activeView()->execute(SCI_APPENDTEXT, 6, reinterpret_cast<sptr_t>("More.\n"));
+            CHECK(w->pluginMessage(NPPM_SAVECURRENTFILE, 0, 0) == FALSE);
+            CHECK(w->isModified(*w->activeBuffer()));
+            CHECK(fake_ftp::readAll(local) == "# Read me\nEdit.\n");
+            CHECK(fake_ftp::readAll(server / "docs" / "readme.md") == "# Read me\nEdit.\n");
+            CHECK(errors.size() == 1 && errors[0].find("Not saved") != std::string::npos && errors[0].find("553") != std::string::npos);
+            // Writable again: the next save goes through.
+            fs::permissions(server / "docs" / "readme.md", fs::perms::owner_read | fs::perms::owner_write);
+            CHECK(w->pluginMessage(NPPM_SAVECURRENTFILE, 0, 0) == TRUE);
+            CHECK(fake_ftp::readAll(server / "docs" / "readme.md") == "# Read me\nEdit.\nMore.\n");
+            CHECK(!w->isModified(*w->activeBuffer()));
+            // No stray upload copies in the cache.
+            int strays = 0;
+            for (const auto& e : fs::directory_iterator(tmp / "cache" / "notepad-plus-plus-gtk" / "NppRemote"))
+                strays += e.path().filename().string().rfind(".upload-", 0) == 0;
+            CHECK(strays == 0);
         }
         // One connection did it all.
         CHECK(ftp.logins == 1);
+        g_source_remove(dialogTimer);
         CHECK(w->requestQuit());
     }
     g_object_unref(app);

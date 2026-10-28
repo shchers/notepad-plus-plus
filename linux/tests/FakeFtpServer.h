@@ -240,8 +240,14 @@ private:
                 while ((n = ::recv(d, chunk, sizeof chunk, 0)) > 0)
                     data.append(chunk, static_cast<std::size_t>(n));
                 ::close(d);
-                writeAll(real(cwd, arg), data);
-                sendLine(c, "226 Transfer complete");
+                // A read-only file is refused, as a server refuses another user's file.
+                const fs::path target = real(cwd, arg);
+                if (fs::exists(target, ec) && ::access(target.c_str(), W_OK) != 0) {
+                    sendLine(c, "553 Permission denied");
+                } else {
+                    writeAll(target, data);
+                    sendLine(c, "226 Transfer complete");
+                }
             } else if (cmd == "MKD") {
                 sendLine(c, fs::create_directory(real(cwd, arg), ec) ? "257 \"" + arg + "\" created" : "550 Cannot create");
             } else if (cmd == "RMD") {

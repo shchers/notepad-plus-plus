@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <strings.h>
 
@@ -62,7 +63,8 @@ void addPlaceholder(GtkTreeStore* store, GtkTreeIter* parent, const char* text)
 
 std::string profileUrl(const Profile& p)
 {
-    std::string url = p.protocol == Protocol::Ftp ? "ftp://" : "sftp://";
+    // fish:// as Midnight Commander and KDE name the shell link.
+    std::string url = p.protocol == Protocol::Ftp ? "ftp://" : p.protocol == Protocol::Shell ? "fish://" : "sftp://";
     if (!p.user.empty())
         url += p.user + "@";
     url += p.host;
@@ -292,7 +294,7 @@ void Panel::build()
     gtk_widget_set_visible(logBox_, settings_.showLog);
     gtk_widget_hide(spinner_);
     updateButtons();
-    log(LogKind::Info, "Choose a profile with the Connect button (FTP, or SFTP through the system's OpenSSH client).");
+    log(LogKind::Info, "Choose a profile with the Connect button (FTP, or SFTP or a shell link through the system's OpenSSH client).");
 }
 
 void Panel::setShown(bool shown)
@@ -520,7 +522,8 @@ struct ProfileEditor {
             return;
         Profile& p = profiles[current];
         p.name = gtk_entry_get_text(GTK_ENTRY(name));
-        p.protocol = gtk_combo_box_get_active(GTK_COMBO_BOX(protocol)) == 1 ? Protocol::Ftp : Protocol::Sftp;
+        const int kind = gtk_combo_box_get_active(GTK_COMBO_BOX(protocol));
+        p.protocol = kind == 1 ? Protocol::Ftp : kind == 2 ? Protocol::Shell : Protocol::Sftp;
         p.host = gtk_entry_get_text(GTK_ENTRY(host));
         p.port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(port));
         p.user = gtk_entry_get_text(GTK_ENTRY(user));
@@ -544,7 +547,7 @@ struct ProfileEditor {
         const Profile p = any ? profiles[index] : Profile{};
         loading = true;
         gtk_entry_set_text(GTK_ENTRY(name), p.name.c_str());
-        gtk_combo_box_set_active(GTK_COMBO_BOX(protocol), p.protocol == Protocol::Ftp ? 1 : 0);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(protocol), p.protocol == Protocol::Ftp ? 1 : p.protocol == Protocol::Shell ? 2 : 0);
         gtk_entry_set_text(GTK_ENTRY(host), p.host.c_str());
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(port), p.port);
         gtk_entry_set_text(GTK_ENTRY(user), p.user.c_str());
@@ -659,14 +662,15 @@ void Panel::editProfiles()
     ed.protocol = gtk_combo_box_text_new();
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ed.protocol), "SFTP (OpenSSH)");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ed.protocol), "FTP");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ed.protocol), "Shell link (SSH, no SFTP needed)");
     field("_Protocol:", ed.protocol);
     ed.host = gtk_entry_new();
     field("_Host:", ed.host);
     ed.port = gtk_spin_button_new_with_range(0, 65535, 1);
-    gtk_widget_set_tooltip_text(ed.port, "0: the protocol's default (22 for SFTP, 21 for FTP)");
+    gtk_widget_set_tooltip_text(ed.port, "0: the protocol's default (22 for SFTP and the shell link, 21 for FTP)");
     field("P_ort:", ed.port);
     ed.user = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(ed.user), "anonymous (FTP) / from ~/.ssh/config (SFTP)");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(ed.user), "anonymous (FTP) / from ~/.ssh/config (SSH)");
     field("_User:", ed.user);
     ed.password = gtk_entry_new();
     gtk_entry_set_visibility(GTK_ENTRY(ed.password), FALSE);
@@ -689,8 +693,9 @@ void Panel::editProfiles()
     field("SSH _key:", ed.identity, ed.identityBrowse);
     ed.sftpOptions = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(ed.sftpOptions), "e.g. -o ProxyJump=gateway");
-    field("sftp optio_ns:", ed.sftpOptions);
-    GtkWidget* note = gtk_label_new("SFTP runs the system's sftp command: ~/.ssh/config, keys and the agent apply.");
+    field("ssh optio_ns:", ed.sftpOptions);
+    GtkWidget* note = gtk_label_new("SFTP runs the system's sftp command, the shell link its ssh command with plain shell commands on the "
+                                    "server (for hosts without SFTP): ~/.ssh/config, keys and the agent apply.");
     gtk_label_set_xalign(GTK_LABEL(note), 0);
     gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(note), "dim-label");
@@ -1247,11 +1252,19 @@ void Panel::uploadFile(const std::string& local, const std::string& remote, bool
 {
     if (!session_)
         return;
+    std::string folder, cached;
+    const bool fromCache = fromCachePath(cacheRoot_, local, folder, cached);
     session_->post([local, remote](RemoteClient& c) { return c.upload(local, remote); },
-                   [this, remote, refreshAfter](bool ok, const std::string& error) {
+                   [this, local, remote, refreshAfter, fromCache](bool ok, const std::string& error) {
                        if (!ok) {
+                           // Notepad++ saved the local copy: the tab looks saved, the server has the old file.
                            if (error != "cancelled")
-                               showError("Cannot upload " + remote, error);
+                               showError("Cannot upload " + remote,
+                                         fromCache ? error + "\n\nThe changes are saved only in the local copy, " + local +
+                                                         ", not on the server. Save again to retry."
+                                                   : error);
+                           else if (fromCache)
+                               log(LogKind::Error, "Not uploaded; the changes are only in " + local);
                            return;
                        }
                        log(LogKind::Info, "Uploaded " + remote);
@@ -1285,10 +1298,149 @@ void Panel::uploadCurrent()
     uploadFile(local, target, true);
 }
 
+bool Panel::sessionFor(const Profile& p, const std::string& remote)
+{
+    if (session_ && session_->profile().name != p.name) {
+        if (!confirm(remote + " belongs to \"" + p.name + "\", not to \"" + session_->profile().name +
+                         "\". Disconnect, connect to \"" + p.name + "\" and upload it?",
+                     "_Upload"))
+            return false;
+        connectTo(p.name);
+    } else if (!session_) {
+        connectTo(p.name);
+    }
+    return session_ != nullptr;
+}
+
+void Panel::beforeSave(UINT_PTR bufferId)
+{
+    if (shutDown_)
+        return;
+    const HWND npp = npp_._nppHandle;
+    const LRESULT len = ::SendMessage(npp, NPPM_GTKGETSAVETARGET, bufferId, 0);
+    if (len <= 0)
+        return;
+    std::wstring w(static_cast<std::size_t>(len) + 1, L'\0');
+    ::SendMessage(npp, NPPM_GTKGETSAVETARGET, bufferId, reinterpret_cast<LPARAM>(w.data()));
+    const std::string target = narrow(w.c_str());
+    std::string folder, remote;
+    if (!fromCachePath(cacheRoot_, target, folder, remote))
+        return;
+    auto notSaved = [&](const std::string& why, const std::string& detail) {
+        ::SendMessage(npp, NPPM_GTKCANCELSAVE, bufferId, 0);
+        log(LogKind::Error, "Not saved: " + why);
+        if (!detail.empty())
+            showError("Not saved: " + why,
+                      detail + "\n\nNothing was written: the document is still modified. Save again to retry, or use Save As to keep "
+                               "a copy elsewhere.");
+    };
+    const Profile* p = profileByFolder(folder);
+    if (!p) {
+        notSaved("no profile for " + target, "The file is in the Remote Files cache, but no profile uses that folder.");
+        return;
+    }
+    if (!sessionFor(*p, remote)) {
+        notSaved(remote + " was not uploaded", "No connection to \"" + p->name + "\".");
+        return;
+    }
+    // The document's bytes, as the save will write them.
+    std::string tmp = cacheRoot_ + "/.upload-XXXXXX";
+    const int fd = g_mkstemp(tmp.data());
+    if (fd < 0) {
+        notSaved("cannot upload " + remote, tmp + ": " + std::strerror(errno));
+        return;
+    }
+    ::close(fd);
+    if (!::SendMessage(npp, NPPM_GTKWRITEBUFFER, bufferId, reinterpret_cast<LPARAM>(wide(tmp).c_str()))) {
+        ::unlink(tmp.c_str());
+        notSaved("cannot upload " + remote, "The document could not be written to " + tmp + ".");
+        return;
+    }
+    log(LogKind::Info, "Uploading " + remote);
+    std::string error;
+    const bool ok = uploadNow(tmp, remote, error);
+    ::unlink(tmp.c_str());
+    if (!ok) {
+        notSaved("cannot upload " + remote, error == "cancelled" ? std::string() : error);
+        return;
+    }
+    log(LogKind::Info, "Uploaded " + remote);
+    uploadedBeforeSave_.push_back(target);
+    refreshDir(parentPath(remote));
+}
+
+bool Panel::uploadNow(const std::string& local, const std::string& remote, std::string& error)
+{
+    struct Wait {
+        bool finished = false;
+        bool ok = false;
+        std::string error;
+        guint showTimer = 0;
+        GtkWidget* dialog = nullptr;
+    };
+    auto wait = std::make_shared<Wait>();
+    Session* session = session_.get();
+    session->post([local, remote](RemoteClient& c) { return c.upload(local, remote); },
+                  [wait](bool ok, const std::string& e) {
+                      wait->ok = ok;
+                      wait->error = e;
+                      wait->finished = true;
+                  });
+
+    GtkWidget* d = gtk_dialog_new_with_buttons("Remote Files", mainWindow(), static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+                                               "_Stop", GTK_RESPONSE_CANCEL, nullptr);
+    GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_container_set_border_width(GTK_CONTAINER(row), 12);
+    GtkWidget* spinner = gtk_spinner_new();
+    gtk_spinner_start(GTK_SPINNER(spinner));
+    gtk_box_pack_start(GTK_BOX(row), spinner, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), gtk_label_new(("Uploading " + remote + "…").c_str()), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), row, TRUE, TRUE, 0);
+    g_signal_connect(d, "response", G_CALLBACK(+[](GtkDialog*, gint, gpointer p) {
+                         auto* self = static_cast<Panel*>(p);
+                         if (self->session_)
+                             self->session_->cancel();
+                     }), this);
+    g_signal_connect(d, "delete-event", G_CALLBACK(+[](GtkWidget*, GdkEvent*, gpointer p) -> gboolean {
+                         auto* self = static_cast<Panel*>(p);
+                         if (self->session_)
+                             self->session_->cancel();
+                         return TRUE;
+                     }), this);
+    // The grab holds the editor's input from the start (the text being saved
+    // must not change); the dialog itself only when the upload takes a while.
+    gtk_widget_realize(d); // a grab sends events to it: it needs its window
+    gtk_grab_add(d);
+    wait->dialog = d;
+    wait->showTimer = g_timeout_add(300, +[](gpointer p) -> gboolean {
+        auto* w = static_cast<Wait*>(p);
+        w->showTimer = 0;
+        gtk_widget_show_all(w->dialog);
+        return G_SOURCE_REMOVE;
+    }, wait.get());
+    while (!wait->finished && session_.get() == session)
+        g_main_context_iteration(nullptr, TRUE);
+    if (wait->showTimer)
+        g_source_remove(wait->showTimer);
+    gtk_grab_remove(d);
+    gtk_widget_destroy(d);
+    if (!wait->finished) {
+        error = "the connection was closed";
+        return false;
+    }
+    error = wait->error;
+    return wait->ok;
+}
+
 void Panel::fileSaved(const std::string& path)
 {
     if (shutDown_)
         return;
+    const auto sent = std::find(uploadedBeforeSave_.begin(), uploadedBeforeSave_.end(), path);
+    if (sent != uploadedBeforeSave_.end()) {
+        uploadedBeforeSave_.erase(sent);
+        return;
+    }
     std::string folder, remote;
     if (!fromCachePath(cacheRoot_, path, folder, remote))
         return;
@@ -1297,16 +1449,7 @@ void Panel::fileSaved(const std::string& path)
         log(LogKind::Error, "Not uploaded: no profile for " + path);
         return;
     }
-    if (session_ && session_->profile().name != p->name) {
-        if (!confirm(remote + " belongs to \"" + p->name + "\", not to \"" + session_->profile().name +
-                         "\". Disconnect, connect to \"" + p->name + "\" and upload it?",
-                     "_Upload"))
-            return;
-        connectTo(p->name);
-    } else if (!session_) {
-        connectTo(p->name);
-    }
-    if (!session_)
+    if (!sessionFor(*p, remote))
         return;
     log(LogKind::Info, "Uploading " + remote);
     uploadFile(path, remote, true);

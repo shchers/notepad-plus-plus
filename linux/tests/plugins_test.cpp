@@ -166,7 +166,7 @@ void testReady(ui::MainWindow& w)
             aux += c;
     aux.resize(3, '0');
     CHECK(get("version") == v.substr(0, v.find('.')) + "." + std::to_string(std::atoi(aux.c_str())));
-    CHECK(get("gtkVersion") == "1");
+    CHECK(get("gtkVersion") == "2");
     CHECK(get("mainWindow") == "yes");
     CHECK(get("path") == "new 1");
     CHECK(get("openFiles") == "1");

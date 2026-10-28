@@ -128,6 +128,7 @@ void testParsers()
     std::string q;
     CHECK(sftpQuote("a \"b\"\\c*", q) && q == "\"a \\\"b\\\"\\\\c*\"");
     CHECK(!sftpQuote("two\nlines", q));
+    CHECK(shellQuote("it's") == "'it'\\''s'" && shellQuote("") == "''");
 
     CHECK(joinPath("/", "a") == "/a" && joinPath("/x", "a") == "/x/a" && joinPath("/x/", "a") == "/x/a");
     CHECK(parentPath("/a/b") == "/a" && parentPath("/a") == "/" && parentPath("/") == "/" && parentPath("/a/b/") == "/a");
@@ -147,6 +148,39 @@ void testParsers()
 
     CHECK(formatSize(-1).empty() && formatSize(12) == "12 B" && formatSize(1536) == "1.5 KB" && formatSize(50 * 1048576LL) == "50 MB");
     CHECK(formatTime(utcTime(2026, 10, 28, 10, 15, 0)) == "2026-10-28 10:15");
+}
+
+// The shell link's upload script, run by the shells at hand: every byte
+// value, '%', quotes, backslashes, a leading '-', long lines, nothing.
+void testShellWriteScript(const fs::path& tmp)
+{
+    std::string all;
+    for (int i = 0; i < 256; ++i)
+        all += static_cast<char>(i);
+    std::string big;
+    for (int i = 0; i < 40000; ++i)
+        big += static_cast<char>(i * 13 % 256);
+    const std::string samples[] = {"", "-n -e text\n", "100% 'quoted' \\back\\slash\\n %s %d\n", "no newline", all, big, "Привіт, світ\n"};
+    const char* shells[] = {"/bin/sh", "/bin/dash", "/bin/bash", "/usr/bin/busybox"};
+    for (const char* sh : shells) {
+        if (::access(sh, X_OK) != 0)
+            continue;
+        const bool busybox = std::strstr(sh, "busybox") != nullptr;
+        int n = 0;
+        for (const std::string& data : samples) {
+            const fs::path out = tmp / ("written " + std::to_string(n++));
+            writeAll(tmp / "script.sh", shellWriteScript(data, out.string()) + "\n");
+            const std::string cmd = std::string(sh) + (busybox ? " sh" : "") + " '" + (tmp / "script.sh").string() + "'";
+            CHECK(std::system(cmd.c_str()) == 0);
+            const bool same = readAll(out) == data;
+            CHECK(same);
+            if (!same)
+                std::fprintf(stderr, "  %s: sample %d differs\n", sh, n - 1);
+        }
+        // A folder that is not there: the status says so.
+        writeAll(tmp / "script.sh", shellWriteScript("x", (tmp / "no such dir" / "f").string()) + "\n");
+        CHECK(std::system((std::string(sh) + (busybox ? " sh" : "") + " '" + (tmp / "script.sh").string() + "' 2>/dev/null").c_str()) != 0);
+    }
 }
 
 // The calls every protocol must get right, on the server's folder `home`.
@@ -445,6 +479,46 @@ void testSftp(const fs::path& tmp)
         CHECK(!c->connected());
         CHECK(c->error().find("erification") != std::string::npos || c->error().find("ost key") != std::string::npos);
     }
+    {
+        // The shell link through the same sshd: ssh runs /bin/sh, no SFTP.
+        fs::remove_all(home);
+        seed(home);
+        Profile s = p;
+        s.protocol = Protocol::Shell;
+        const int before = secrets;
+        auto c = makeClient(s, hooks);
+        CHECK(c->connect());
+        if (!c->connected())
+            std::fprintf(stderr, "  shell: %s\n", c->error().c_str());
+        CHECK(confirms == 2); // the known_hosts above was removed
+        CHECK(secrets == before + 1);
+        std::string h;
+        CHECK(c->home(h) && h == g_get_home_dir());
+        exerciseClient(*c, tmp, home.string(), home, "Shell link: ssh running /bin/sh");
+        // A name sh would expand, with a quote and a line break.
+        const std::string odd = joinPath(home.string(), "$(touch pwned) 'a'\nb `x`.txt");
+        writeAll(tmp / "odd.txt", "odd\n");
+        CHECK(c->upload((tmp / "odd.txt").string(), odd));
+        CHECK(readAll(odd) == "odd\n");
+        std::vector<Entry> list;
+        CHECK(c->list(home.string() + "/", list) && hasEntry(list, "hello.txt", false));
+        CHECK(c->download(odd, (tmp / "odd back.txt").string()) && readAll(tmp / "odd back.txt") == "odd\n");
+        CHECK(!fs::exists(home / "pwned") && !fs::exists("pwned"));
+        CHECK(c->removeFile(odd) && !fs::exists(odd));
+        // A file without a final line break, and an empty one, come back as they are.
+        writeAll(home / "partial", "no newline");
+        writeAll(home / "empty", "");
+        CHECK(c->download(joinPath(home.string(), "partial"), (tmp / "partial").string()) && readAll(tmp / "partial") == "no newline");
+        CHECK(c->download(joinPath(home.string(), "empty"), (tmp / "empty").string()) && fs::file_size(tmp / "empty") == 0);
+        // Writing keeps the file's mode (in place, not replaced).
+        fs::permissions(home / "partial", fs::perms::owner_all);
+        CHECK(c->upload((tmp / "odd.txt").string(), joinPath(home.string(), "partial")));
+        CHECK((fs::status(home / "partial").permissions() & fs::perms::owner_exec) != fs::perms::none);
+        CHECK(!c->list(joinPath(home.string(), "missing"), list) && c->error().find("No such file") != std::string::npos);
+        CHECK(c->connected());
+        c->disconnect();
+        CHECK(!c->connected());
+    }
     ::kill(pid, SIGTERM);
     ::waitpid(pid, nullptr, 0);
 }
@@ -458,6 +532,7 @@ int main()
     const fs::path tmp = ::mkdtemp(tmpl);
 
     testParsers();
+    testShellWriteScript(tmp);
     testFtp(tmp);
     testSession(tmp);
     testSftp(tmp);

@@ -35,7 +35,12 @@ public:
     // The current document: back to where it came from when it is a cached
     // remote file, else into the selected remote folder.
     void uploadCurrent();
-    // Notepad++ saved `path`: upload it when it is in the cache.
+    // NPPN_FILEBEFORESAVE (port interface 2): a document saved into the
+    // cache is uploaded first, and when that fails the save is stopped, so
+    // the tab stays modified and the local copy stays the server's.
+    void beforeSave(UINT_PTR bufferId);
+    // Notepad++ saved `path`: upload it when it is in the cache (unless
+    // beforeSave did).
     void fileSaved(const std::string& path);
     // NPPN_SHUTDOWN: logs out; the widgets go with the window.
     void shutdown();
@@ -63,6 +68,12 @@ private:
     void downloadTo(const std::string& remote);
     void refreshLocalCopy(const std::string& remote);
     void uploadFile(const std::string& local, const std::string& remote, bool refreshAfter);
+    // Uploads and waits, the editor taking no input meanwhile; a dialog with
+    // Stop shows when it takes a while.
+    bool uploadNow(const std::string& local, const std::string& remote, std::string& error);
+    // A session on the profile of a cached file, connecting (after asking,
+    // when another profile is connected). False when there is none.
+    bool sessionFor(const Profile& p, const std::string& remote);
     void newFile();
     void newFolder();
     void renameSelected();
@@ -93,6 +104,7 @@ private:
     bool registered_ = false;
     bool shutDown_ = false;
     std::string root_;
+    std::vector<std::string> uploadedBeforeSave_; // cache paths beforeSave sent
     std::string home_; // the login folder, for "~"
 
     GtkWidget* box_ = nullptr;
