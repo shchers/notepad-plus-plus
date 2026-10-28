@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- ==========================================================================\
+|
+|   To learn how to make your own language parser, please check the following
+|   link:
+|       https://npp-user-manual.org/docs/function-list/
+|
+\=========================================================================== -->
+<NotepadPlus>
+	<functionList>
+		<!-- ==================================================== [ Markdown ] -->
+		<!-- Markdown (.md, .markdown), for the "Markdown" User Defined        -->
+		<!-- Language. Lists the headings in document order: ATX ("## Title", -->
+		<!-- with or without closing #s) and Setext (a line underlined with    -->
+		<!-- === or ---). Fenced code blocks, HTML comments and a YAML front   -->
+		<!-- matter are skipped, so "# comment" in a shell snippet is not one. -->
+
+		<parser
+			displayName="Markdown"
+			id         ="markdown_heading"
+			commentExpr="(?m)(?s:\A---\h*$.*?^---\h*$)|^\h{0,3}(`{3,}|~{3,})(?s:.*?)(?:^\h{0,3}\1[`~]*\h*$|\z)|(?s:&lt;!--.*?--&gt;)"
+		>
+			<function
+				mainExpr="(?m-s)^\h{0,3}#{1,6}\h+\S.*$|^\h{0,3}(?![-*+&gt;]\h|\d{1,9}[.)]\h|#|(?:=+|-+)\h*$)\S.*\R\h{0,3}(?:=+|-+)\h*$"
+			>
+				<functionName>
+					<nameExpr expr="(?-s)[^#\h].*" />
+					<nameExpr expr="(?-s).+?(?=\h+#+\h*$|\h*$)" />
+				</functionName>
+			</function>
+		</parser>
+	</functionList>
+</NotepadPlus>

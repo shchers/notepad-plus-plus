@@ -1,0 +1,48 @@
+---
+title: Front matter
+tags: [a, b]
+---
+
+Project Title
+=============
+
+Intro paragraph with a #hashtag and C# in it.
+
+# Getting started
+
+## Install ##
+
+```bash
+# not a heading: shell comment
+make install
+```
+
+~~~
+## not a heading either
+~~~
+
+### Build on C#
+
+    # indented code, not a heading
+
+<!--
+# commented out heading
+-->
+
+####### seven hashes is not a heading
+
+#no space is not a heading
+
+Usage
+-----
+
+- list item
+---
+
+Some text
+
+---
+
+## Configuration options
+
+   #### Indented by three

@@ -129,6 +129,8 @@
 			<!-- ==================== User Defined Languages ============================ -->
 			<association id= "devicetree.xml"		userDefinedLangName="Device Tree (preinstalled)"/>
 			<association id= "devicetree.xml"		userDefinedLangName="Device Tree (preinstalled dark mode)"/>
+			<association id= "markdown.xml"		userDefinedLangName="Markdown (preinstalled)"/>
+			<association id= "markdown.xml"		userDefinedLangName="Markdown (preinstalled dark mode)"/>
 			<association id= "krl.xml"				userDefinedLangName="KRL"/>
 			<association id= "nppexec.xml"			userDefinedLangName="NppExec"/>
 			<association id= "sinumerik.xml"		userDefinedLangName="Sinumerik"/>

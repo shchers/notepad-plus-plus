@@ -311,9 +311,12 @@ nested class scans are the same code paths with the same Boost regex flags.
 Rules are upstream's `functionList/*.xml` with `overrideMap.xml`
 (language IDs map onto the generated language table, which is in
 `LangType` order); the user's `functionList/` folder overrides the shipped
-one. The 43 fixtures of upstream's own unit test
+one. The 44 fixtures of upstream's own unit test
 (`PowerEditor/Test/FunctionList`) run in the test suite and produce
-exactly upstream's expected JSON.
+exactly upstream's expected JSON. The preinstalled Markdown UDL lists its
+headings (`functionList/markdown.xml`, ATX and Setext, skipping fenced
+code, HTML comments and front matter), added to the upstream tree like
+the Device Tree rules.
 
 **Folder as Workspace and Project Panels**: folders are listed lazily and
 refreshed through `GFileMonitor`, and the roots, expanded folders and
