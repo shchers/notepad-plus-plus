@@ -37,6 +37,11 @@ cmake --install HelloGtk/build    # -> ~/.local/share/notepad-plus-plus-gtk/plug
 
 Restart Notepad++: the commands are under **Plugins ▸ Hello GTK**.
 
+A larger example ships with the editor: the Remote Files plugin
+(`linux/plugins/NppRemote`, [REMOTE_FILES.md](REMOTE_FILES.md)), with a
+docked panel, dialogs, a worker thread that calls back into the GTK thread,
+and uploads on `NPPN_FILESAVED`.
+
 The whole plugin side of a "hello" command is what it would be on Windows:
 
 ```cpp

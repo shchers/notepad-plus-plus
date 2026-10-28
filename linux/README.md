@@ -40,6 +40,7 @@ sudo apt install ./dist/notepad-plus-plus-gtk_*.deb
 | [docs/PACKAGING.md](docs/PACKAGING.md) | `.deb` with CPack or debhelper, PPA, Flatpak, snap, arm64, AppStream, versioning, verification |
 | [docs/PORTING.md](docs/PORTING.md) | Survey of the upstream code, architecture, feature status, module map, roadmap, plugin design |
 | [docs/PLUGINS.md](docs/PLUGINS.md) | Writing and porting plugins: the SDK, plugin folders, messages and notifications, menus, toolbar, docked panels |
+| [docs/REMOTE_FILES.md](docs/REMOTE_FILES.md) | The bundled Remote Files plugin: editing files on FTP and SFTP servers |
 
 ## What works
 
@@ -63,7 +64,9 @@ Plugins use Notepad++'s plugin interface: their source builds against the
 SDK in `sdk/` (upstream's plugin headers on a small `windows.h`) into a
 `.so`, with a GTK user interface — see [docs/PLUGINS.md](docs/PLUGINS.md)
 and the sample in `sdk/examples/HelloGtk`; Plugins ▸ Plugins Admin installs,
-removes and deactivates them. Preferences has every page that applies on
+removes and deactivates them. One plugin comes with the editor: Remote
+Files, for editing files on FTP and SFTP servers in the spirit of NppFTP
+([docs/REMOTE_FILES.md](docs/REMOTE_FILES.md)). Preferences has every page that applies on
 Linux, including auto-completion with upstream's API files, smart
 highlighting, matching tags and clickable links. The full table is in
 [docs/PORTING.md §4](docs/PORTING.md#4-what-works-today).
@@ -86,6 +89,7 @@ linux/
 │   │                       Find dialog, search results, dialogs, printing, dock and panels,
 │   │                       plugin manager and plugin messages
 │   └── main.cpp            CLI compatible with Notepad++ switches
+├── plugins/NppRemote/      bundled plugin: Remote Files (FTP on POSIX sockets, SFTP via OpenSSH)
 ├── sdk/                    plugin SDK: include/ (windows.h, tchar.h, NppGtk.h), pkg-config
 │                           template, examples/HelloGtk
 ├── tests/                  headless CTest suite (Xvfb), test plugins
@@ -95,7 +99,7 @@ linux/
 ├── docker/                 multi-stage Dockerfile (toolchain, build, artifact, runtime)
 ├── scripts/                install-build-deps, build-native, build-deb, docker-build,
 │                           build-source-package (PPA), build-flatpak, build-snap
-└── docs/                   BUILD, PACKAGING, PORTING, PLUGINS
+└── docs/                   BUILD, PACKAGING, PORTING, PLUGINS, REMOTE_FILES
 ```
 
 ## Licence

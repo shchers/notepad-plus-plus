@@ -8,6 +8,7 @@
 #   share/icons/hicolor/<size>/apps/<app-id>.png
 #   share/man/man1/notepad-plus-plus-gtk.1.gz
 #   share/doc/notepad-plus-plus-gtk/copyright
+#   <libdir>/notepad-plus-plus-gtk/plugins/NppRemote/NppRemote.so   bundled plugin
 #   include/notepad-plus-plus-gtk/                 plugin SDK headers   } component
 #   <libdir>/pkgconfig/notepad-plus-plus-gtk-plugin.pc                  } "sdk"
 
@@ -81,7 +82,8 @@ install(FILES "${_chlog_gz}" DESTINATION ${CMAKE_INSTALL_DOCDIR})
 # Plugin SDK: the port's shims and upstream's plugin headers side by side in
 # one directory, as a plugin includes them (<windows.h>, "PluginInterface.h").
 # System-wide plugins go to <libdir>/notepad-plus-plus-gtk/plugins/<Name>/
-# (pkg-config --variable=plugindir); nothing is installed there by default.
+# (pkg-config --variable=plugindir); the bundled plugins (linux/plugins) go
+# there too.
 set(_sdk_dir ${CMAKE_INSTALL_INCLUDEDIR}/${NPP_EXE_NAME})
 install(FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include/windows.h"

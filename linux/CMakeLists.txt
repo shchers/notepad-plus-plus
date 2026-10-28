@@ -122,6 +122,12 @@ target_include_directories(nppgtk_sdk INTERFACE ${NPP_SDK_INCLUDE_DIRS})
 target_link_libraries(nppgtk_sdk INTERFACE PkgConfig::GTK3)
 
 add_subdirectory(src)
+# Plugins bundled with the editor (linux/plugins).
+option(NPP_BUILD_BUNDLED_PLUGINS "Build and install the bundled plugins (Remote Files)" ON)
+if(NPP_BUILD_BUNDLED_PLUGINS)
+  find_package(Threads REQUIRED)
+  add_subdirectory(plugins)
+endif()
 if(NPP_BUILD_TESTS)
   enable_testing()
   # The SDK example is built (and loaded by the app_launch test) to keep it working.

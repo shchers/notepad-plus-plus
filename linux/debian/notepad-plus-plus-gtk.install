@@ -1,4 +1,5 @@
 usr/bin
+usr/lib/*/notepad-plus-plus-gtk/plugins
 usr/share/applications
 usr/share/icons
 usr/share/man

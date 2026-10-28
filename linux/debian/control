@@ -19,7 +19,8 @@ Rules-Requires-Root: no
 Package: notepad-plus-plus-gtk
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: adwaita-icon-theme, fonts-dejavu-core, librsvg2-common, libvte-2.91-0
+Recommends: adwaita-icon-theme, fonts-dejavu-core, librsvg2-common, libvte-2.91-0,
+            openssh-client
 Description: Notepad++ source code editor - native GTK 3 port (preview)
  Unofficial native Linux build of the Notepad++ source tree using the GTK 3
  backend of Scintilla. This preview provides tabbed editing in two views,
@@ -36,8 +37,9 @@ Description: Notepad++ source code editor - native GTK 3 port (preview)
  shortcuts.xml, stylers.xml, themes and userDefineLang.xml work unchanged.
  .
  Plugins use Notepad++'s plugin interface, rebuilt for Linux with the SDK in
- notepad-plus-plus-gtk-dev. Auto-completion, smart highlighting and the other
- Preferences work as in Notepad++.
+ notepad-plus-plus-gtk-dev. The bundled Remote Files plugin edits files on FTP
+ and SFTP servers (SFTP through openssh-client). Auto-completion, smart
+ highlighting and the other Preferences work as in Notepad++.
 
 Package: notepad-plus-plus-gtk-dev
 Architecture: any

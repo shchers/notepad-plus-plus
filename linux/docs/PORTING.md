@@ -454,6 +454,7 @@ on its own.
 | Encoding ▸ ANSI | ➖ left out: "ANSI" is the system code page, UTF-8 on Linux, where upstream does nothing for it; Character Set covers legacy encodings |
 | Auto-completion, call tips, smart highlighting, tag matching | ✅ `core/EditorFeatures`, after upstream's `AutoCompletion`, `FunctionCallTip`, `SmartHighlighter`, `xmlMatchedTagsHighlighter` with its `autoCompletion/*.xml`; also auto-insert of pairs and close tags, advanced auto-indent, clickable links, Ctrl+double-click delimiter selection (Phase 1 would replace them with upstream's own code) |
 | Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom; Terminal (port-only, View > Terminal, Ctrl+`: the user's shell in VTE, loaded at run time; starts in the current document's folder, keys go to the shell first, Ctrl+Shift+C/V, context menu with "Go to Current Document's Folder", `exit` closes the panel, editor colours and font; without VTE the panel names the package to install) |
+| Remote files | ✅ bundled plugin Remote Files (`linux/plugins/NppRemote`, `docs/REMOTE_FILES.md`), in the spirit of NppFTP: profiles, a docked remote folder tree, open on double-click, upload on save, upload/download/new/rename/delete; FTP on POSIX sockets (passive EPSV/PASV, active PORT/EPRT, MLSD/LIST), SFTP through OpenSSH's `sftp` in a pseudo-terminal (passwords, passphrases and host keys asked in dialogs); no FTPS |
 | Plugins | ✅ upstream's plugin interface, rebuilt from source against the SDK in `linux/sdk` (§7, `docs/PLUGINS.md`): entry points, `NPPM_*` messages with upstream's return values, `NPPN_*` and forwarded `SCN_*` notifications, Plugins menu with check marks, default and `shortcuts.xml` keys, toolbar buttons, docked panels (GTK widgets) restored at start, `NPPM_MSGTOPLUGIN`, `SendMessage` from worker threads, `-noPlugin`, `-pluginMessage=`; Plugins Admin (installed and deactivated plugins, install from `.so`/`.zip`, remove, deactivate) and Import plugin(s); sample plugin, pkg-config file, `-dev` package |
 
 ---
@@ -642,6 +643,13 @@ the saved state of panels that are not registered yet, so a plugin panel
 returns to its place, and panels open at exit are reopened through their
 `dlgID` command after `NPPN_READY`, as upstream does.
 
+**Bundled plugin.** `linux/plugins/NppRemote` (Remote Files, see
+`docs/REMOTE_FILES.md`) is built like a third-party plugin, on the SDK and
+GTK only, and installed into the system plugin directory; the build tree
+puts it at the same relative place, so `build/bin/notepad-plus-plus-gtk`
+loads it without installing. Its protocol code is a static library the
+tests use directly. `-DNPP_BUILD_BUNDLED_PLUGINS=OFF` leaves it out.
+
 **What does not carry over**: Win32 user interface code (dialogs, resource
 scripts, `DockingDlgInterface`) and other Win32 calls. Plugins build their
 UI with GTK; `NPPM_GTKGETMAINWINDOW` gives the parent window.
@@ -720,12 +728,17 @@ one-line upstream PR:
   kinds, trim, TAB/space, empty and duplicate lines, join, comments,
   bookmarked lines), column insertion, Style Configurator saving, and UDL
   parsing (current and pre-2.0 formats, keyword encoding).
-- `panels`: Function List parsing on the 43 fixtures of upstream's own
+- `panels`: Function List parsing on the 44 fixtures of upstream's own
   Function List unit test (`PowerEditor/Test/FunctionList`, checked out
   with CRLF line endings as upstream's Windows CI sees them, with its
   test-only `filesForTesting` rules), compared with upstream's expected
   JSON; `.workspace` files (Windows backslashes, relative names, round
   trip); `session.xml` `<FileBrowser>`.
+- `remote_files`, `remote_files_panel`: the bundled Remote Files plugin
+  (`docs/REMOTE_FILES.md` §Tests): parsers, the FTP client against an FTP
+  server run by the test, the SFTP client against a private `sshd` when
+  OpenSSH is installed, and the plugin in a live window (save uploads,
+  double-click opens).
 - `dialogs_and_commands`: a live `MainWindow`: commands by upstream ID and
   their check states, read-only protection, Style tokens, tab commands,
   printing to PDF (pages, selection); Find dialog operations, status texts,

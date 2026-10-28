@@ -59,6 +59,22 @@ target_compile_definitions(nppgtk_plugins_tests PRIVATE
   NPP_TEST_PLUGINS_DIR="${NPP_TEST_PLUGINS_DIR}")
 add_dependencies(nppgtk_plugins_tests nppgtk_data TestPlugin NotAPlugin)
 
+# The bundled Remote Files plugin's protocol side: no display needed. Its
+# SFTP part starts a private sshd when OpenSSH is installed.
+if(TARGET nppremote_proto)
+  add_executable(nppgtk_remote_tests remote_test.cpp)
+  target_link_libraries(nppgtk_remote_tests PRIVATE nppremote_proto)
+  target_compile_options(nppgtk_remote_tests PRIVATE -Wall -Wextra -Wpedantic)
+  # The plugin itself, loaded by a live window.
+  add_executable(nppgtk_remote_panel_tests remote_panel_test.cpp)
+  target_link_libraries(nppgtk_remote_panel_tests PRIVATE nppgtk_core)
+  target_include_directories(nppgtk_remote_panel_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/NppRemote")
+  target_compile_definitions(nppgtk_remote_panel_tests PRIVATE
+    NPP_TEST_DATA_DIR="${NPP_BUILD_DATA_DIR}"
+    NPP_BUNDLED_PLUGINS_DIR="${CMAKE_BINARY_DIR}/${NPP_PLUGINS_SUBDIR}")
+  add_dependencies(nppgtk_remote_panel_tests nppgtk_data NppRemote)
+endif()
+
 find_program(XVFB_RUN xvfb-run)
 set(_wrap "")
 if(XVFB_RUN AND NOT DEFINED ENV{DISPLAY} AND NOT DEFINED ENV{WAYLAND_DISPLAY})
@@ -72,6 +88,11 @@ add_test(NAME dialogs_and_commands COMMAND ${_wrap} $<TARGET_FILE:nppgtk_ui_test
 add_test(NAME panels COMMAND ${_wrap} $<TARGET_FILE:nppgtk_panels_tests>)
 add_test(NAME plugins COMMAND ${_wrap} $<TARGET_FILE:nppgtk_plugins_tests>)
 add_test(NAME preferences COMMAND ${_wrap} $<TARGET_FILE:nppgtk_prefs_tests>)
+if(TARGET nppgtk_remote_tests)
+  add_test(NAME remote_files COMMAND $<TARGET_FILE:nppgtk_remote_tests>)
+  set_tests_properties(remote_files PROPERTIES TIMEOUT 120)
+  add_test(NAME remote_files_panel COMMAND ${_wrap} $<TARGET_FILE:nppgtk_remote_panel_tests>)
+endif()
 
 # Launch the real application on a sample file and let it quit on its own,
 # with a fresh configuration each time (a session left by an earlier run
@@ -106,7 +127,14 @@ if(_wrap)
   list(APPEND _env "GDK_BACKEND=x11")
 endif()
 set_tests_properties(unit_and_widget documents_and_sessions search_shortcuts_i18n dialogs_and_commands panels plugins preferences PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
+if(TARGET nppgtk_remote_panel_tests)
+  set_tests_properties(remote_files_panel PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
+endif()
 set(_launch_env ${_env})
 list(TRANSFORM _launch_env REPLACE "^XDG_CONFIG_HOME=.*" "XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/test-config-launch")
-list(TRANSFORM _launch_env REPLACE "^NPP_GTK_PLUGINS_DIR=.*" "NPP_GTK_PLUGINS_DIR=${NPP_TEST_PLUGINS_DIR}:${NPP_EXAMPLE_PLUGINS_DIR}")
+set(_launch_plugins "${NPP_TEST_PLUGINS_DIR}:${NPP_EXAMPLE_PLUGINS_DIR}")
+if(NPP_BUILD_BUNDLED_PLUGINS)
+  string(APPEND _launch_plugins ":${CMAKE_BINARY_DIR}/${NPP_PLUGINS_SUBDIR}")
+endif()
+list(TRANSFORM _launch_env REPLACE "^NPP_GTK_PLUGINS_DIR=.*" "NPP_GTK_PLUGINS_DIR=${_launch_plugins}")
 set_tests_properties(app_launch PROPERTIES ENVIRONMENT "${_launch_env}" TIMEOUT 60 FIXTURES_REQUIRED launch_config)
