@@ -459,6 +459,7 @@ on its own.
 | Auto-completion, call tips, smart highlighting, tag matching | ✅ `core/EditorFeatures`, after upstream's `AutoCompletion`, `FunctionCallTip`, `SmartHighlighter`, `xmlMatchedTagsHighlighter` with its `autoCompletion/*.xml`; also auto-insert of pairs and close tags, advanced auto-indent, clickable links, Ctrl+double-click delimiter selection (Phase 1 would replace them with upstream's own code) |
 | Docking panels | ✅ dock on four sides, drag a panel's tab to another side or out of the window to float it, caption menu (dock to a side, float, close), layout kept; Function List (upstream rules, classes, sort, filter, follows edits), Folder as Workspace (several roots, live refresh, locate current file, Find in Files here, terminal / file manager here, session), Document Map (view zone, click and drag to scroll), Document List, Character Panel (code page, HTML names and numbers), Clipboard History, Project Panels 1–3 (upstream `.workspace` files, Find in Projects); search results docked at the bottom; Terminal (port-only, View > Terminal, Ctrl+`: the user's shell in VTE, loaded at run time; starts in the current document's folder, keys go to the shell first, Ctrl+Shift+C/V, context menu with "Go to Current Document's Folder", `exit` closes the panel, editor colours and font; without VTE the panel names the package to install) |
 | Remote files | ✅ bundled plugin Remote Files (`linux/plugins/NppRemote`, `docs/REMOTE_FILES.md`), in the spirit of NppFTP: profiles, a docked remote folder tree, open on double-click, upload on save, upload/download/new/rename/delete; FTP on POSIX sockets (passive EPSV/PASV, active PORT/EPRT, MLSD/LIST), SFTP through OpenSSH's `sftp` in a pseudo-terminal (passwords, passphrases and host keys asked in dialogs), and a shell link as in Midnight Commander (`ssh` running `/bin/sh`: `ls`, `cat`, `printf`, for servers without SFTP); no FTPS |
+| Spell checking | ✅ bundled plugin Spell Checker (`linux/plugins/SpellCheck`, `docs/SPELL_CHECK.md`), in the spirit of DSpellCheck: misspellings on screen underlined as you type (in source code only in comments and strings, from the lexers' style tags), suggestions, Ignore and Add to Dictionary on right-click, next/previous misspelling, several languages at once, a personal dictionary; dictionaries from Enchant (Hunspell, Nuspell, Aspell), loaded at run time |
 | Plugins | ✅ upstream's plugin interface, rebuilt from source against the SDK in `linux/sdk` (§7, `docs/PLUGINS.md`): entry points, `NPPM_*` messages with upstream's return values, `NPPN_*` and forwarded `SCN_*` notifications, Plugins menu with check marks, default and `shortcuts.xml` keys, toolbar buttons, docked panels (GTK widgets) restored at start, `NPPM_MSGTOPLUGIN`, `SendMessage` from worker threads, `-noPlugin`, `-pluginMessage=`; Plugins Admin (installed and deactivated plugins, install from `.so`/`.zip`, remove, deactivate) and Import plugin(s); sample plugin, pkg-config file, `-dev` package |
 
 ---
@@ -647,12 +648,14 @@ the saved state of panels that are not registered yet, so a plugin panel
 returns to its place, and panels open at exit are reopened through their
 `dlgID` command after `NPPN_READY`, as upstream does.
 
-**Bundled plugin.** `linux/plugins/NppRemote` (Remote Files, see
-`docs/REMOTE_FILES.md`) is built like a third-party plugin, on the SDK and
+**Bundled plugins.** `linux/plugins/NppRemote` (Remote Files, see
+`docs/REMOTE_FILES.md`) and `linux/plugins/SpellCheck` (Spell Checker, see
+`docs/SPELL_CHECK.md`) are built like third-party plugins, on the SDK and
 GTK only, and installed into the system plugin directory; the build tree
-puts it at the same relative place, so `build/bin/notepad-plus-plus-gtk`
-loads it without installing. Its protocol code is a static library the
-tests use directly. `-DNPP_BUILD_BUNDLED_PLUGINS=OFF` leaves it out.
+puts them at the same relative place, so `build/bin/notepad-plus-plus-gtk`
+loads them without installing. Their code apart from the entry points is a
+static library the tests use directly. `-DNPP_BUILD_BUNDLED_PLUGINS=OFF`
+leaves them out.
 
 **What does not carry over**: Win32 user interface code (dialogs, resource
 scripts, `DockingDlgInterface`) and other Win32 calls. Plugins build their
@@ -744,6 +747,11 @@ one-line upstream PR:
   private `sshd` when OpenSSH is installed (the shell link's upload script
   also under dash, bash and busybox), and the plugin in a live window (save uploads,
   double-click opens).
+- `spell_check`, `spell_check_editor`: the bundled Spell Checker
+  (`docs/SPELL_CHECK.md` §Tests): word finding and the styles checked per
+  lexer, Enchant's dictionaries, and the plugin in a live window
+  (underlines, right-click suggestions, Add to Dictionary, typing, next and
+  previous misspelling); skipped without Enchant's `en_US` dictionary.
 - `dialogs_and_commands`: a live `MainWindow`: commands by upstream ID and
   their check states, read-only protection, Style tokens, tab commands,
   printing to PDF (pages, selection); Find dialog operations, status texts,

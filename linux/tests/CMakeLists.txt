@@ -75,6 +75,20 @@ if(TARGET nppremote_proto)
   add_dependencies(nppgtk_remote_panel_tests nppgtk_data NppRemote)
 endif()
 
+# The bundled Spell Checker: its words and dictionaries, then the plugin in a
+# live window.
+if(TARGET spellcheck_core)
+  add_executable(nppgtk_spellcheck_tests spellcheck_test.cpp)
+  target_link_libraries(nppgtk_spellcheck_tests PRIVATE spellcheck_core)
+  target_compile_options(nppgtk_spellcheck_tests PRIVATE -Wall -Wextra -Wpedantic)
+  add_executable(nppgtk_spellcheck_panel_tests spellcheck_panel_test.cpp)
+  target_link_libraries(nppgtk_spellcheck_panel_tests PRIVATE nppgtk_core spellcheck_core)
+  target_compile_definitions(nppgtk_spellcheck_panel_tests PRIVATE
+    NPP_TEST_DATA_DIR="${NPP_BUILD_DATA_DIR}"
+    NPP_BUNDLED_PLUGINS_DIR="${CMAKE_BINARY_DIR}/${NPP_PLUGINS_SUBDIR}")
+  add_dependencies(nppgtk_spellcheck_panel_tests nppgtk_data SpellCheck)
+endif()
+
 find_program(XVFB_RUN xvfb-run)
 set(_wrap "")
 if(XVFB_RUN AND NOT DEFINED ENV{DISPLAY} AND NOT DEFINED ENV{WAYLAND_DISPLAY})
@@ -92,6 +106,11 @@ if(TARGET nppgtk_remote_tests)
   add_test(NAME remote_files COMMAND $<TARGET_FILE:nppgtk_remote_tests>)
   set_tests_properties(remote_files PROPERTIES TIMEOUT 120)
   add_test(NAME remote_files_panel COMMAND ${_wrap} $<TARGET_FILE:nppgtk_remote_panel_tests>)
+endif()
+
+if(TARGET nppgtk_spellcheck_tests)
+  add_test(NAME spell_check COMMAND $<TARGET_FILE:nppgtk_spellcheck_tests>)
+  add_test(NAME spell_check_editor COMMAND ${_wrap} $<TARGET_FILE:nppgtk_spellcheck_panel_tests>)
 endif()
 
 # Launch the real application on a sample file and let it quit on its own,
@@ -129,6 +148,9 @@ endif()
 set_tests_properties(unit_and_widget documents_and_sessions search_shortcuts_i18n dialogs_and_commands panels plugins preferences PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
 if(TARGET nppgtk_remote_panel_tests)
   set_tests_properties(remote_files_panel PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
+endif()
+if(TARGET nppgtk_spellcheck_panel_tests)
+  set_tests_properties(spell_check_editor PROPERTIES ENVIRONMENT "${_env}" TIMEOUT 60)
 endif()
 set(_launch_env ${_env})
 list(TRANSFORM _launch_env REPLACE "^XDG_CONFIG_HOME=.*" "XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/test-config-launch")

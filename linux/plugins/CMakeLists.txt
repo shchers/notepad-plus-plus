@@ -6,3 +6,4 @@
 set(NPP_BUILD_PLUGINS_DIR "${CMAKE_BINARY_DIR}/${NPP_PLUGINS_SUBDIR}")
 
 add_subdirectory(NppRemote)
+add_subdirectory(SpellCheck)

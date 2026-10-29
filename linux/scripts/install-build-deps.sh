@@ -2,7 +2,8 @@
 # Installs everything needed to build, test and package the GTK port on
 # Ubuntu 22.04+ / Debian 12+ (amd64 and arm64). Run with sudo or as root.
 # appstream and desktop-file-utils let the test suite validate the
-# AppStream metadata and the desktop file; devscripts is for PPA uploads.
+# AppStream metadata and the desktop file, Enchant and an English dictionary
+# the Spell Checker tests; devscripts is for PPA uploads.
 set -euo pipefail
 
 if [[ ${EUID} -ne 0 ]]; then
@@ -17,6 +18,7 @@ apt-get install -y --no-install-recommends \
     xvfb xauth dbus \
     dpkg-dev file \
     debhelper fakeroot lintian devscripts \
-    appstream desktop-file-utils
+    appstream desktop-file-utils \
+    libenchant-2-2 hunspell-en-us
 
 echo "Build dependencies installed."

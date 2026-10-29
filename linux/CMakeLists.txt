@@ -123,7 +123,7 @@ target_link_libraries(nppgtk_sdk INTERFACE PkgConfig::GTK3)
 
 add_subdirectory(src)
 # Plugins bundled with the editor (linux/plugins).
-option(NPP_BUILD_BUNDLED_PLUGINS "Build and install the bundled plugins (Remote Files)" ON)
+option(NPP_BUILD_BUNDLED_PLUGINS "Build and install the bundled plugins (Remote Files, Spell Checker)" ON)
 if(NPP_BUILD_BUNDLED_PLUGINS)
   find_package(Threads REQUIRED)
   add_subdirectory(plugins)

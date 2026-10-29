@@ -40,7 +40,11 @@ Restart Notepad++: the commands are under **Plugins ▸ Hello GTK**.
 A larger example ships with the editor: the Remote Files plugin
 (`linux/plugins/NppRemote`, [REMOTE_FILES.md](REMOTE_FILES.md)), with a
 docked panel, dialogs, a worker thread that calls back into the GTK thread,
-and uploads on `NPPN_FILESAVED`.
+and uploads on `NPPN_FILESAVED`. The Spell Checker
+(`linux/plugins/SpellCheck`, [SPELL_CHECK.md](SPELL_CHECK.md)) shows
+Scintilla-side work: an allocated indicator, forwarded `SCN_MODIFIED` and
+`SCN_UPDATEUI`, and a context menu of its own on the editor widgets
+(`NPPM_GTKGETSCINTILLAWIDGET`).
 
 The whole plugin side of a "hello" command is what it would be on Windows:
 

@@ -8,7 +8,8 @@
 #   share/icons/hicolor/<size>/apps/<app-id>.png
 #   share/man/man1/notepad-plus-plus-gtk.1.gz
 #   share/doc/notepad-plus-plus-gtk/copyright
-#   <libdir>/notepad-plus-plus-gtk/plugins/NppRemote/NppRemote.so   bundled plugin
+#   <libdir>/notepad-plus-plus-gtk/plugins/NppRemote/NppRemote.so   bundled plugins
+#   <libdir>/notepad-plus-plus-gtk/plugins/SpellCheck/SpellCheck.so
 #   include/notepad-plus-plus-gtk/                 plugin SDK headers   } component
 #   <libdir>/pkgconfig/notepad-plus-plus-gtk-plugin.pc                  } "sdk"
 
