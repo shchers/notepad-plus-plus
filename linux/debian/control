@@ -10,6 +10,8 @@ Build-Depends: debhelper-compat (= 13),
                xvfb <!nocheck>,
                libenchant-2-2 <!nocheck>,
                hunspell-en-us <!nocheck>,
+               hunspell-de-de <!nocheck>,
+               hunspell-ru <!nocheck>,
                xauth <!nocheck>,
                dbus <!nocheck>,
                appstream <!nocheck>,
@@ -41,8 +43,8 @@ Description: Notepad++ source code editor - native GTK 3 port (preview)
  Plugins use Notepad++'s plugin interface, rebuilt for Linux with the SDK in
  notepad-plus-plus-gtk-dev. The bundled Remote Files plugin edits files on FTP
  and SFTP servers, or over an ssh shell link (both through openssh-client). The
- bundled Spell Checker underlines misspellings as you type, with Enchant's
- Hunspell or Aspell dictionaries. Auto-completion, smart
+ bundled Spell Checker underlines misspellings as you type in every installed
+ Hunspell or Aspell language, detecting the language of each paragraph. Auto-completion, smart
  highlighting and the other Preferences work as in Notepad++.
 
 Package: notepad-plus-plus-gtk-dev

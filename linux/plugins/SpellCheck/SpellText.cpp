@@ -252,6 +252,112 @@ std::array<bool, 256> checkableStyles(const StyleQuery& q)
     return on;
 }
 
+std::vector<std::size_t> paragraphStarts(std::string_view text, const std::vector<Word>& words)
+{
+    std::vector<std::size_t> starts;
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        if (i == 0) {
+            starts.push_back(0);
+            continue;
+        }
+        // A blank line between this word and the last one.
+        bool lineBreak = false, blank = false;
+        for (std::size_t k = words[i - 1].end; k < words[i].start && k < text.size() && !blank; ++k) {
+            const char ch = text[k];
+            if (ch == '\n') {
+                blank = lineBreak;
+                lineBreak = true;
+            } else if (ch != ' ' && ch != '\t' && ch != '\r') {
+                lineBreak = false;
+            }
+        }
+        if (blank)
+            starts.push_back(i);
+    }
+    return starts;
+}
+
+GUnicodeScript wordScript(std::string_view word)
+{
+    for (const char* p = word.data(); p < word.data() + word.size(); p = g_utf8_next_char(p)) {
+        const GUnicodeScript s = g_unichar_get_script(g_utf8_get_char(p));
+        if (s != G_UNICODE_SCRIPT_COMMON && s != G_UNICODE_SCRIPT_INHERITED && s != G_UNICODE_SCRIPT_UNKNOWN)
+            return s;
+    }
+    return G_UNICODE_SCRIPT_UNKNOWN;
+}
+
+GUnicodeScript languageScript(const std::string& tag)
+{
+    // Languages not written in Latin letters (the others are).
+    static const std::map<std::string, GUnicodeScript> scripts = {
+        {"ru", G_UNICODE_SCRIPT_CYRILLIC}, {"uk", G_UNICODE_SCRIPT_CYRILLIC}, {"be", G_UNICODE_SCRIPT_CYRILLIC},
+        {"bg", G_UNICODE_SCRIPT_CYRILLIC}, {"sr", G_UNICODE_SCRIPT_CYRILLIC}, {"mk", G_UNICODE_SCRIPT_CYRILLIC},
+        {"kk", G_UNICODE_SCRIPT_CYRILLIC}, {"ky", G_UNICODE_SCRIPT_CYRILLIC}, {"mn", G_UNICODE_SCRIPT_CYRILLIC},
+        {"tg", G_UNICODE_SCRIPT_CYRILLIC}, {"tt", G_UNICODE_SCRIPT_CYRILLIC}, {"ba", G_UNICODE_SCRIPT_CYRILLIC},
+        {"el", G_UNICODE_SCRIPT_GREEK},    {"he", G_UNICODE_SCRIPT_HEBREW},   {"yi", G_UNICODE_SCRIPT_HEBREW},
+        {"ar", G_UNICODE_SCRIPT_ARABIC},   {"fa", G_UNICODE_SCRIPT_ARABIC},   {"ur", G_UNICODE_SCRIPT_ARABIC},
+        {"ug", G_UNICODE_SCRIPT_ARABIC},   {"hy", G_UNICODE_SCRIPT_ARMENIAN}, {"ka", G_UNICODE_SCRIPT_GEORGIAN},
+        {"hi", G_UNICODE_SCRIPT_DEVANAGARI}, {"mr", G_UNICODE_SCRIPT_DEVANAGARI}, {"ne", G_UNICODE_SCRIPT_DEVANAGARI},
+        {"sa", G_UNICODE_SCRIPT_DEVANAGARI}, {"bn", G_UNICODE_SCRIPT_BENGALI}, {"as", G_UNICODE_SCRIPT_BENGALI},
+        {"gu", G_UNICODE_SCRIPT_GUJARATI}, {"pa", G_UNICODE_SCRIPT_GURMUKHI}, {"ta", G_UNICODE_SCRIPT_TAMIL},
+        {"te", G_UNICODE_SCRIPT_TELUGU},   {"kn", G_UNICODE_SCRIPT_KANNADA},  {"ml", G_UNICODE_SCRIPT_MALAYALAM},
+        {"si", G_UNICODE_SCRIPT_SINHALA},  {"or", G_UNICODE_SCRIPT_ORIYA},    {"th", G_UNICODE_SCRIPT_THAI},
+        {"lo", G_UNICODE_SCRIPT_LAO},      {"km", G_UNICODE_SCRIPT_KHMER},    {"my", G_UNICODE_SCRIPT_MYANMAR},
+        {"bo", G_UNICODE_SCRIPT_TIBETAN},  {"am", G_UNICODE_SCRIPT_ETHIOPIC}, {"ti", G_UNICODE_SCRIPT_ETHIOPIC},
+        {"ko", G_UNICODE_SCRIPT_HANGUL},   {"dv", G_UNICODE_SCRIPT_THAANA},
+    };
+    // Serbian and others also come in Latin letters: sr_Latn, sr_RS@latin.
+    if (tag.find("Latn") != std::string::npos || tag.find("latin") != std::string::npos)
+        return G_UNICODE_SCRIPT_LATIN;
+    const auto it = scripts.find(tag.substr(0, tag.find_first_of("_-@")));
+    return it == scripts.end() ? G_UNICODE_SCRIPT_LATIN : it->second;
+}
+
+bool isLanguageTag(const std::string& tag)
+{
+    return !tag.empty() && tag.find('-') == std::string::npos && g_ascii_islower(tag[0]);
+}
+
+std::vector<std::string> detectionLanguages(const std::vector<std::string>& installed, const std::vector<std::string>& preferred)
+{
+    auto base = [](const std::string& tag) { return tag.substr(0, tag.find_first_of("_@")); };
+    // Each language's variant.
+    std::map<std::string, std::string> chosen;
+    for (const std::string& tag : installed) {
+        if (!isLanguageTag(tag))
+            continue;
+        const std::string lang = base(tag);
+        std::string upper = lang;
+        for (char& ch : upper)
+            ch = g_ascii_toupper(ch);
+        auto rank = [&](const std::string& t) {
+            const auto p = std::find(preferred.begin(), preferred.end(), t);
+            if (p != preferred.end())
+                return static_cast<long>(p - preferred.begin());
+            if (t == lang + "_" + upper || (lang == "en" && t == "en_US"))
+                return 1000L;
+            if (t == lang)
+                return 1001L;
+            return 1002L;
+        };
+        auto it = chosen.find(lang);
+        if (it == chosen.end() || rank(tag) < rank(it->second))
+            chosen[lang] = tag;
+    }
+    // The user's languages first, in their order; then the others.
+    std::vector<std::string> out;
+    for (const std::string& p : preferred) {
+        const auto it = chosen.find(base(p));
+        if (it != chosen.end() && std::find(out.begin(), out.end(), it->second) == out.end())
+            out.push_back(it->second);
+    }
+    for (const auto& [lang, tag] : chosen)
+        if (std::find(out.begin(), out.end(), tag) == out.end())
+            out.push_back(tag);
+    return out;
+}
+
 bool isProseFile(const std::string& path)
 {
     static const std::set<std::string> prose = {"txt", "text", "md", "markdown", "mdown", "mkd", "rst", "adoc",

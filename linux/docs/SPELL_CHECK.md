@@ -22,10 +22,44 @@ dictionary for each language you write in:
 sudo apt install libenchant-2-2 hunspell-en-us hunspell-de-de   # or aspell-fr, ...
 ```
 
-The default language is the first of your desktop's languages (`LANGUAGE`,
-`LANG`) that has a dictionary, else English. **Settings…** lists the
-installed dictionaries. Tick several to accept a word that any one of them
-knows, for example when you write in two languages.
+Every installed language is used, and there is nothing to choose. Install
+a language's dictionary and it is checked from the next start (or after
+**Settings ▸ OK**). Enchant lists the Hunspell dictionaries in
+`/usr/share/hunspell` and `~/.config/enchant/hunspell`, and Nuspell and
+Aspell ones too.
+
+## Language detection
+
+Each paragraph (text between blank lines) is checked in one language: the
+installed one that knows most of its words. So an English paragraph and a
+German one in the same file are each checked in their own language.
+
+- **Ties:** a paragraph too short to tell (one word, or only typos) is
+  taken to be in the language of the text around it on screen. Failing
+  that, it is your desktop's language (`LANGUAGE`, `LANG`), else English.
+- **Alphabets:** words in another alphabet are checked in a language
+  written in it. Russian words in an English paragraph are checked in
+  Russian. Words in an alphabet with no installed dictionary are not
+  checked at all.
+- **Single foreign words:** a German word in an English paragraph is a
+  misspelling there. Right-click it and choose Ignore or Add to
+  Dictionary.
+- **Typos:** a typo is not excused because another language happens to
+  have the word. Only the paragraph's own language counts.
+- **Variants:** one dictionary per language takes part in detection. It is
+  your locale's variant (en_GB under `LANG=en_GB.UTF-8`), else the main
+  country's (de_DE, fr_FR, en_US). Aspell's extra variants
+  (`en-variant_0`, `en_GB-ize`) are left out.
+- **Menu:** the right-click menu names the language a word was checked in
+  ("Language: de_DE"), and its suggestions come from that language.
+
+The other dictionaries of a language are opened only when a text in its
+alphabet needs them. A paragraph entirely in your own language opens no
+other dictionary.
+
+To restrict this, choose **Settings ▸ Only these languages** and tick the
+ones you want, which can include specific variants such as en_GB or de_CH.
+Detection then chooses only among those.
 
 ## Using it
 
@@ -75,7 +109,8 @@ are left out by default.
 In the plugins' configuration folder
 (`~/.config/notepad-plus-plus-gtk/plugins/config`):
 
-- `SpellCheck.ini` holds the settings.
+- `SpellCheck.ini` holds the settings: `AutoDetect` and `Languages`, the
+  checking options.
 - `SpellCheck.dic` is your personal dictionary, one word per line, shared
   by all languages. **Settings ▸ Edit Personal Dictionary** opens it in
   Notepad++. When you save it there, the plugin reads it again.
@@ -87,7 +122,10 @@ In the plugins' configuration folder
   change checks the lines on screen of both views: it lexes them
   (`SCI_COLOURISE`), reads text and styles together
   (`SCI_GETSTYLEDTEXTFULL`), finds the words (`SpellText.cpp`) and asks
-  Enchant, with the results cached.
+  Enchant, with the results cached per dictionary. Language detection
+  scores a sample of up to 60 words per paragraph and alphabet. It tries
+  the expected language first and asks no other when that one knows them
+  all.
 - **Which styles.** It uses the lexer's style tags (`SCI_GETNAMEDSTYLES`,
   `SCI_TAGSOFSTYLE`: "comment", "literal string") where the lexer has them,
   and a short table of styles for the others.
@@ -106,12 +144,19 @@ In the plugins' configuration folder
     above;
   - the choice of styles for C++, HTML, plain text, Markdown, UDL, SQL and
     unknown lexers;
+  - paragraphs, scripts of words and languages, Aspell variant tags, and
+    the choice of one dictionary per language;
   - when Enchant and `en_US` are installed: checking, suggestions, Ignore,
-    and the personal dictionary (adding, editing outside, reloading).
+    and the personal dictionary (adding, editing outside, reloading);
+  - with `de_DE` and `ru_RU` too: English, German and Russian paragraphs
+    in one text, each checked in its own language; short paragraphs,
+    foreign words, suggestions per language, and unchecked alphabets.
 - `spell_check_editor` (`tests/spellcheck_panel_test.cpp`) runs the plugin
   in a live window:
   - underlines in a text file, and in a C++ file only in its comment and
     string;
+  - with `de_DE`, a German paragraph checked in German, with German
+    suggestions;
   - a right-click suggestion replaces the word, and a right-click on a
     correct word goes on to Scintilla;
   - Add to Dictionary writes `SpellCheck.dic`;
@@ -119,4 +164,6 @@ In the plugins' configuration folder
   - Next and Previous Misspelling, including the wrap round the end;
   - turning checking off clears the underlines.
 
-  Without Enchant or its `en_US` dictionary it reports SKIP and passes.
+  Without Enchant or its `en_US` dictionary it reports SKIP and passes. It
+  copies the developer's `~/.config/enchant` into its own configuration, so
+  dictionaries kept there count.

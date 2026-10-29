@@ -98,23 +98,32 @@ std::vector<std::string> Speller::dictionaries()
     std::set<std::string> tags;
     if (available())
         api_->listDicts(broker_, +[](const char* tag, const char*, const char*, const char*, void* data) {
-            static_cast<std::set<std::string>*>(data)->insert(tag);
+            if (isLanguageTag(tag))
+                static_cast<std::set<std::string>*>(data)->insert(tag);
         }, &tags);
     return {tags.begin(), tags.end()};
+}
+
+std::vector<std::string> Speller::userLanguages()
+{
+    // "de_AT.UTF-8", "de_AT", "de", ..., "C".
+    std::vector<std::string> out;
+    for (const gchar* const* n = g_get_language_names(); *n; ++n) {
+        const std::string name = *n;
+        if (name == "C" || name == "POSIX" || name.find('.') != std::string::npos || name.find('@') != std::string::npos)
+            continue;
+        out.push_back(name);
+    }
+    return out;
 }
 
 std::string Speller::defaultLanguage()
 {
     if (!available())
         return {};
-    // "de_DE.UTF-8", "de_DE", "de", ..., "C".
-    for (const gchar* const* n = g_get_language_names(); *n; ++n) {
-        const std::string name = *n;
-        if (name == "C" || name == "POSIX" || name.find('.') != std::string::npos || name.find('@') != std::string::npos)
-            continue;
+    for (const std::string& name : userLanguages())
         if (api_->dictExists(broker_, name.c_str()))
             return name;
-    }
     for (const char* fallback : {"en_US", "en_GB", "en"})
         if (api_->dictExists(broker_, fallback))
             return fallback;
@@ -122,34 +131,70 @@ std::string Speller::defaultLanguage()
     return all.empty() ? std::string() : all.front();
 }
 
+std::vector<std::string> Speller::allLanguages()
+{
+    std::vector<std::string> preferred = userLanguages();
+    const std::string def = defaultLanguage();
+    if (!def.empty())
+        preferred.insert(preferred.begin(), def);
+    return detectionLanguages(dictionaries(), preferred);
+}
+
 void Speller::freeDicts()
 {
-    for (void* d : dicts_)
-        api_->freeDict(broker_, d);
+    for (Dict& d : dicts_)
+        if (d.handle)
+            api_->freeDict(broker_, d.handle);
     dicts_.clear();
 }
 
 void Speller::setLanguages(const std::vector<std::string>& tags)
 {
     languages_.clear();
-    cache_.clear();
+    knownCache_.clear();
     if (!available())
         return;
     freeDicts();
     for (const std::string& tag : tags) {
-        if (std::find(languages_.begin(), languages_.end(), tag) != languages_.end())
+        if (std::find(languages_.begin(), languages_.end(), tag) != languages_.end() || !api_->dictExists(broker_, tag.c_str()))
             continue;
-        if (void* d = api_->requestDict(broker_, tag.c_str())) {
-            dicts_.push_back(d);
-            languages_.push_back(tag);
-        }
+        Dict d;
+        d.tag = tag;
+        d.script = languageScript(tag);
+        dicts_.push_back(std::move(d));
+        languages_.push_back(tag);
     }
+}
+
+void* Speller::open(Dict& d)
+{
+    if (!d.opened) {
+        d.opened = true;
+        d.handle = api_->requestDict(broker_, d.tag.c_str());
+        if (!d.handle)
+            g_warning("SpellCheck: cannot open the %s dictionary: %s", d.tag.c_str(), api_->brokerError(broker_));
+    }
+    return d.handle;
+}
+
+bool Speller::accepts(Dict& d, const std::string& word)
+{
+    const auto hit = d.cache.find(word);
+    if (hit != d.cache.end())
+        return hit->second;
+    void* h = open(d);
+    // < 0: an error, not a misspelling.
+    const bool ok = !h || api_->check(h, word.c_str(), static_cast<ssize_t>(word.size())) <= 0;
+    if (d.cache.size() > 100000)
+        d.cache.clear();
+    d.cache.emplace(word, ok);
+    return ok;
 }
 
 void Speller::setPersonalDictionary(const std::string& path)
 {
     personalPath_ = path;
-    cache_.clear();
+    knownCache_.clear();
     if (!available() || path.empty())
         return;
     if (personal_) {
@@ -166,47 +211,146 @@ void Speller::setPersonalDictionary(const std::string& path)
     personal_ = api_->requestPwlDict(broker_, path.c_str());
 }
 
-bool Speller::correct(const std::string& word)
+bool Speller::known(const std::string& word)
 {
-    if (dicts_.empty())
-        return true;
-    const auto hit = cache_.find(word);
-    if (hit != cache_.end())
+    const auto hit = knownCache_.find(word);
+    if (hit != knownCache_.end())
         return hit->second;
-    const auto len = static_cast<ssize_t>(word.size());
-    bool ok = ignored_.count(word) != 0 || (personal_ && api_->check(personal_, word.c_str(), len) == 0);
-    for (std::size_t i = 0; !ok && i < dicts_.size(); ++i)
-        ok = api_->check(dicts_[i], word.c_str(), len) <= 0; // < 0: an error, not a misspelling
-    if (cache_.size() > 100000)
-        cache_.clear();
-    cache_.emplace(word, ok);
+    const bool ok = ignored_.count(word) != 0 || (personal_ && api_->check(personal_, word.c_str(), static_cast<ssize_t>(word.size())) == 0);
+    if (knownCache_.size() > 100000)
+        knownCache_.clear();
+    knownCache_.emplace(word, ok);
     return ok;
 }
 
-std::vector<std::string> Speller::suggest(const std::string& word, std::size_t max)
+int Speller::detect(const std::vector<Word>& words, const std::vector<std::size_t>& which, GUnicodeScript script, int preferred)
 {
-    std::vector<std::string> out;
-    // The dictionaries' in turn, best first, without repeats.
-    std::vector<std::vector<std::string>> lists;
-    for (void* d : dicts_) {
-        std::size_t n = 0;
-        char** s = api_->suggest(d, word.c_str(), static_cast<ssize_t>(word.size()), &n);
-        lists.emplace_back(s, s + (s ? n : 0));
-        if (s)
-            api_->freeList(d, s);
+    std::vector<int> candidates;
+    for (std::size_t i = 0; i < dicts_.size(); ++i)
+        if (dicts_[i].script == script)
+            candidates.push_back(static_cast<int>(i));
+    if (candidates.empty())
+        return -1;
+    if (preferred < 0 || dicts_[static_cast<std::size_t>(preferred)].script != script)
+        preferred = candidates.front();
+    if (candidates.size() == 1)
+        return candidates.front();
+    // A sample is enough to tell; the user's own words tell nothing.
+    constexpr std::size_t kSample = 60;
+    std::vector<const std::string*> sample;
+    for (std::size_t i : which) {
+        if (sample.size() == kSample)
+            break;
+        if (!known(words[i].text))
+            sample.push_back(&words[i].text);
     }
-    for (std::size_t i = 0; out.size() < max; ++i) {
-        bool any = false;
-        for (const auto& l : lists) {
-            if (i < l.size()) {
-                any = true;
-                if (out.size() < max && std::find(out.begin(), out.end(), l[i]) == out.end())
-                    out.push_back(l[i]);
+    auto score = [&](int d) {
+        int n = 0;
+        for (const std::string* w : sample)
+            n += accepts(dicts_[static_cast<std::size_t>(d)], *w);
+        return n;
+    };
+    // Mostly the text is in the preferred language: no other is opened.
+    const int preferredScore = score(preferred);
+    if (preferredScore == static_cast<int>(sample.size()))
+        return preferred;
+    int best = preferred, bestScore = preferredScore;
+    for (int d : candidates) {
+        if (d == preferred)
+            continue;
+        const int s = score(d);
+        if (s > bestScore) {
+            best = d;
+            bestScore = s;
+        }
+    }
+    return best;
+}
+
+std::vector<std::size_t> Speller::misspelled(std::string_view text, std::vector<Word>& words)
+{
+    std::vector<std::size_t> bad;
+    if (dicts_.empty() || words.empty())
+        return bad;
+    std::vector<GUnicodeScript> scripts(words.size());
+    std::vector<GUnicodeScript> present;
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        scripts[i] = wordScript(words[i].text);
+        if (std::find(present.begin(), present.end(), scripts[i]) == present.end())
+            present.push_back(scripts[i]);
+    }
+    // The language of the whole text, per script: what a paragraph too
+    // short to tell is taken to be in.
+    std::vector<int> textLang(present.size(), -1);
+    for (std::size_t s = 0; s < present.size(); ++s) {
+        std::vector<std::size_t> all;
+        for (std::size_t i = 0; i < words.size(); ++i)
+            if (scripts[i] == present[s])
+                all.push_back(i);
+        textLang[s] = detect(words, all, present[s], -1);
+    }
+    std::vector<std::size_t> starts = paragraphStarts(text, words);
+    starts.push_back(words.size());
+    for (std::size_t p = 0; p + 1 < starts.size(); ++p) {
+        for (std::size_t s = 0; s < present.size(); ++s) {
+            if (textLang[s] < 0)
+                continue; // no dictionary for this script
+            std::vector<std::size_t> group;
+            for (std::size_t i = starts[p]; i < starts[p + 1]; ++i)
+                if (scripts[i] == present[s])
+                    group.push_back(i);
+            if (group.empty())
+                continue;
+            const int lang = detect(words, group, present[s], textLang[s]);
+            Dict& d = dicts_[static_cast<std::size_t>(lang)];
+            for (std::size_t i : group) {
+                if (known(words[i].text) || accepts(d, words[i].text))
+                    continue;
+                words[i].lang = d.tag;
+                bad.push_back(i);
             }
         }
-        if (!any)
-            break;
     }
+    std::sort(bad.begin(), bad.end());
+    return bad;
+}
+
+bool Speller::correct(const std::string& word)
+{
+    if (dicts_.empty() || known(word))
+        return true;
+    const GUnicodeScript script = wordScript(word);
+    bool any = false;
+    for (Dict& d : dicts_) {
+        if (d.script != script)
+            continue;
+        any = true;
+        if (accepts(d, word))
+            return true;
+    }
+    return !any;
+}
+
+std::vector<std::string> Speller::suggest(const std::string& word, const std::string& lang, std::size_t max)
+{
+    std::vector<std::string> out;
+    Dict* dict = nullptr;
+    const GUnicodeScript script = wordScript(word);
+    for (Dict& d : dicts_)
+        if (lang.empty() ? d.script == script : d.tag == lang) {
+            dict = &d;
+            break;
+        }
+    void* h = dict ? open(*dict) : nullptr;
+    if (!h)
+        return out;
+    std::size_t n = 0;
+    char** s = api_->suggest(h, word.c_str(), static_cast<ssize_t>(word.size()), &n);
+    for (std::size_t i = 0; s && i < n && out.size() < max; ++i)
+        if (std::find(out.begin(), out.end(), s[i]) == out.end())
+            out.emplace_back(s[i]);
+    if (s)
+        api_->freeList(h, s);
     return out;
 }
 
@@ -216,13 +360,20 @@ void Speller::add(const std::string& word)
         api_->add(personal_, word.c_str(), static_cast<ssize_t>(word.size()));
     else
         ignored_.insert(word);
-    cache_.clear();
+    knownCache_.clear();
 }
 
 void Speller::ignore(const std::string& word)
 {
     ignored_.insert(word);
-    cache_.clear();
+    knownCache_.clear();
+}
+
+void Speller::forget()
+{
+    knownCache_.clear();
+    for (Dict& d : dicts_)
+        d.cache.clear();
 }
 
 } // namespace spellcheck

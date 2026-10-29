@@ -41,7 +41,7 @@ sudo apt install ./dist/notepad-plus-plus-gtk_*.deb
 | [docs/PORTING.md](docs/PORTING.md) | Survey of the upstream code, architecture, feature status, module map, roadmap, plugin design |
 | [docs/PLUGINS.md](docs/PLUGINS.md) | Writing and porting plugins: the SDK, plugin folders, messages and notifications, menus, toolbar, docked panels |
 | [docs/REMOTE_FILES.md](docs/REMOTE_FILES.md) | The bundled Remote Files plugin: editing files on FTP and SFTP servers, or over a shell link |
-| [docs/SPELL_CHECK.md](docs/SPELL_CHECK.md) | The bundled Spell Checker plugin: spell checking as you type, with Enchant's dictionaries |
+| [docs/SPELL_CHECK.md](docs/SPELL_CHECK.md) | The bundled Spell Checker plugin: spell checking as you type in every installed language, detected per paragraph |
 
 ## What works
 

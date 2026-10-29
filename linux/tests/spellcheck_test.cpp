@@ -140,6 +140,69 @@ void testStyles()
     CHECK(!isProseFile("/a.md/Makefile"));
 }
 
+void testLanguages()
+{
+    {
+        const std::string text = "one two\nthree\n  \nfour\n\n\nfive six";
+        std::vector<Word> w = findWords(text, {}, {});
+        CHECK(w.size() == 6);
+        CHECK((paragraphStarts(text, w) == std::vector<std::size_t>{0, 3, 4}));
+        CHECK(paragraphStarts("", {}).empty());
+    }
+    CHECK(wordScript("hello") == G_UNICODE_SCRIPT_LATIN);
+    CHECK(wordScript("слово") == G_UNICODE_SCRIPT_CYRILLIC);
+    CHECK(wordScript("λόγος") == G_UNICODE_SCRIPT_GREEK);
+    CHECK(languageScript("en_US") == G_UNICODE_SCRIPT_LATIN);
+    CHECK(languageScript("ru_RU") == G_UNICODE_SCRIPT_CYRILLIC);
+    CHECK(languageScript("uk") == G_UNICODE_SCRIPT_CYRILLIC);
+    CHECK(languageScript("sr_Latn_RS") == G_UNICODE_SCRIPT_LATIN);
+    CHECK(languageScript("he_IL") == G_UNICODE_SCRIPT_HEBREW);
+    CHECK(isLanguageTag("de_DE") && isLanguageTag("en"));
+    CHECK(!isLanguageTag("en-variant_0") && !isLanguageTag("en_GB-ize-w_accents"));
+    // One per language: the user's variant, else the main country's.
+    const std::vector<std::string> installed = {"de_AT", "de_CH", "de_DE", "en", "en-variant_0", "en_AU", "en_GB", "en_US", "fr_CA", "ru_RU"};
+    CHECK((detectionLanguages(installed, {"en_GB", "en"}) == std::vector<std::string>{"en_GB", "de_DE", "fr_CA", "ru_RU"}));
+    CHECK((detectionLanguages(installed, {"de_CH", "de", "C"}) == std::vector<std::string>{"de_CH", "en_US", "fr_CA", "ru_RU"}));
+}
+
+// English, German and Russian paragraphs in one text, each checked in its
+// language.
+void testDetection()
+{
+    Speller sp;
+    const std::vector<std::string> dicts = sp.available() ? sp.dictionaries() : std::vector<std::string>();
+    for (const char* need : {"en_US", "de_DE", "ru_RU"})
+        if (std::find(dicts.begin(), dicts.end(), need) == dicts.end()) {
+            std::printf("SKIP language detection: no %s dictionary (hunspell-en-us, hunspell-de-de, hunspell-ru)\n", need);
+            return;
+        }
+    const std::vector<std::string> all = sp.allLanguages();
+    CHECK(std::find(all.begin(), all.end(), "de_DE") != all.end());
+    CHECK(std::count_if(all.begin(), all.end(), [](const std::string& t) { return t.rfind("en", 0) == 0; }) == 1);
+    sp.setLanguages({"en_US", "de_DE", "ru_RU"});
+    auto bad = [&](const std::string& text) {
+        std::vector<Word> words = findWords(text, {}, {});
+        std::string out;
+        for (std::size_t i : sp.misspelled(text, words))
+            out += (out.empty() ? "" : "|") + words[i].text + ":" + words[i].lang;
+        return out;
+    };
+    CHECK(bad("This is an English paragraph with a tpyo in it.\n\n"
+              "Das ist ein deutscher Absatz mit einem Fehlr darin.\n\n"
+              "And English again, with Москва and a слвоо here.") == "tpyo:en_US|Fehlr:de_DE|слвоо:ru_RU");
+    // A paragraph too short to tell is in the language of the text.
+    CHECK(bad("The first paragraph is plainly English.\n\nWrold\n\nAnother one.") == "Wrold:en_US");
+    CHECK(bad("Der erste Absatz ist eindeutig deutsch.\n\nWelt Haus\n\nNoch einer, mit Fehlre.") == "Fehlre:de_DE");
+    // A German word in an English paragraph is a misspelling there.
+    CHECK(bad("We met in the Kindergarten and went to the Bahnhof together.") == "Bahnhof:en_US");
+    // Suggestions come from the word's language.
+    const std::vector<std::string> s = sp.suggest("Fehlr", "de_DE");
+    CHECK(std::find(s.begin(), s.end(), "Fehler") != s.end());
+    // Only English chosen: Cyrillic words are not checked at all.
+    sp.setLanguages({"en_US"});
+    CHECK(bad("Hello слвоо wrold") == "wrold:en_US");
+}
+
 void testSpeller(const std::string& tmp)
 {
     Speller sp;
@@ -160,7 +223,7 @@ void testSpeller(const std::string& tmp)
     CHECK(sp.correct("Hello"));
     CHECK(sp.correct("don't"));
     CHECK(!sp.correct("wrold"));
-    const std::vector<std::string> s = sp.suggest("wrold", 5);
+    const std::vector<std::string> s = sp.suggest("wrold", "", 5);
     CHECK(!s.empty() && s.size() <= 5);
     CHECK(std::find(s.begin(), s.end(), "world") != s.end());
 
@@ -200,7 +263,9 @@ int main()
         return 2;
     testWords();
     testStyles();
+    testLanguages();
     testSpeller(tmp);
+    testDetection();
     const std::string cmd = std::string("rm -rf '") + tmp + "'";
     if (std::system(cmd.c_str()) != 0)
         std::fprintf(stderr, "cannot remove %s\n", tmp);

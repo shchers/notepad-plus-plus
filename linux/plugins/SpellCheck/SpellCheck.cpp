@@ -35,7 +35,8 @@ FuncItem funcItems[kCommands];
 
 struct Settings {
     bool enabled = true;
-    std::vector<std::string> languages; // empty: the user's language
+    bool autoDetect = true;             // all installed languages, detected
+    std::vector<std::string> languages; // otherwise these (empty: the user's)
     bool commentsOnly = true;           // in source code
     WordOptions words;
 };
@@ -156,6 +157,7 @@ void loadSettings()
                 value = v;
         };
         flag("Enabled", settings.enabled);
+        flag("AutoDetect", settings.autoDetect);
         flag("CommentsOnly", settings.commentsOnly);
         flag("IgnoreDigits", settings.words.ignoreDigits);
         flag("IgnoreAllCaps", settings.words.ignoreAllCaps);
@@ -175,6 +177,7 @@ void saveSettings()
 {
     GKeyFile* kf = g_key_file_new();
     g_key_file_set_boolean(kf, "SpellCheck", "Enabled", settings.enabled);
+    g_key_file_set_boolean(kf, "SpellCheck", "AutoDetect", settings.autoDetect);
     g_key_file_set_boolean(kf, "SpellCheck", "CommentsOnly", settings.commentsOnly);
     g_key_file_set_boolean(kf, "SpellCheck", "IgnoreDigits", settings.words.ignoreDigits);
     g_key_file_set_boolean(kf, "SpellCheck", "IgnoreAllCaps", settings.words.ignoreAllCaps);
@@ -201,7 +204,7 @@ bool startSpeller()
         started = true;
         speller.setPersonalDictionary(personalPath);
     }
-    std::vector<std::string> langs = settings.languages;
+    std::vector<std::string> langs = settings.autoDetect ? speller.allLanguages() : settings.languages;
     if (langs.empty()) {
         const std::string def = speller.defaultLanguage();
         if (!def.empty())
@@ -253,14 +256,16 @@ std::vector<Word> misspellings(HWND h, sptr_t start, sptr_t end, const std::arra
         text[i] = styled[2 * i];
         mask[i] = styles[static_cast<unsigned char>(styled[2 * i + 1])] ? 1 : 0;
     }
+    std::vector<Word> words = findWords(text, mask, settings.words);
     const sptr_t caret = skipTyping && h == typingView ? sci(h, SCI_GETCURRENTPOS) : -1;
-    for (Word& w : findWords(text, mask, settings.words)) {
+    if (caret >= 0 && caret == typingEnd)
+        words.erase(std::remove_if(words.begin(), words.end(), [&](const Word& w) { return start + static_cast<sptr_t>(w.end) == caret; }),
+                    words.end());
+    for (std::size_t i : speller.misspelled(text, words)) {
+        Word& w = words[i];
         w.start += static_cast<std::size_t>(start);
         w.end += static_cast<std::size_t>(start);
-        if (caret >= 0 && caret == typingEnd && static_cast<sptr_t>(w.end) == caret)
-            continue;
-        if (!speller.correct(w.text))
-            bad.push_back(std::move(w));
+        bad.push_back(std::move(w));
     }
     return bad;
 }
@@ -282,7 +287,17 @@ void fillIndicator(HWND h, sptr_t start, sptr_t end, const std::vector<Word>& ba
     sci(h, SCI_SETINDICATORCURRENT, static_cast<WPARAM>(previous));
 }
 
-// Marks the lines on screen.
+// The lines on screen: what is checked as you type.
+std::pair<sptr_t, sptr_t> visibleRange(HWND h)
+{
+    const sptr_t firstVisible = sci(h, SCI_GETFIRSTVISIBLELINE);
+    const sptr_t first = sci(h, SCI_DOCLINEFROMVISIBLE, static_cast<WPARAM>(firstVisible));
+    const sptr_t last = sci(h, SCI_DOCLINEFROMVISIBLE, static_cast<WPARAM>(firstVisible + sci(h, SCI_LINESONSCREEN) + 1));
+    const sptr_t start = sci(h, SCI_POSITIONFROMLINE, static_cast<WPARAM>(first));
+    // A huge line is checked up to a point.
+    return {start, std::min(sci(h, SCI_GETLINEENDPOSITION, static_cast<WPARAM>(last)), start + (1 << 20))};
+}
+
 void checkView(HWND h)
 {
     if (indicator < 0)
@@ -293,12 +308,7 @@ void checkView(HWND h)
         fillIndicator(h, 0, length, {});
         return;
     }
-    const sptr_t firstVisible = sci(h, SCI_GETFIRSTVISIBLELINE);
-    const sptr_t first = sci(h, SCI_DOCLINEFROMVISIBLE, static_cast<WPARAM>(firstVisible));
-    const sptr_t last = sci(h, SCI_DOCLINEFROMVISIBLE, static_cast<WPARAM>(firstVisible + sci(h, SCI_LINESONSCREEN) + 1));
-    const sptr_t start = sci(h, SCI_POSITIONFROMLINE, static_cast<WPARAM>(first));
-    // A huge line is checked up to a point.
-    const sptr_t end = std::min(sci(h, SCI_GETLINEENDPOSITION, static_cast<WPARAM>(last)), start + (1 << 20));
+    const auto [start, end] = visibleRange(h);
     fillIndicator(h, start, end, misspellings(h, start, end, stylesToCheck(h), true));
 }
 
@@ -380,6 +390,7 @@ struct Target {
     sptr_t start = 0, end = 0;
     std::string raw;  // the document's bytes there
     std::string word; // as checked
+    std::string lang; // misspelled in this language; empty: correct
 };
 
 std::string textRange(HWND h, sptr_t start, sptr_t end)
@@ -411,6 +422,33 @@ bool wordAt(HWND h, sptr_t pos, Target& t)
         }
     }
     return false;
+}
+
+// Whether the word t is misspelled, as checking as you type tells (the same
+// lines, so the same languages detected), and in which language.
+bool misspelledWord(Target& t)
+{
+    const HWND h = t.view;
+    auto [start, end] = visibleRange(h);
+    if (t.start < start || t.end > end) {
+        // Off screen: its paragraph.
+        sptr_t first = sci(h, SCI_LINEFROMPOSITION, static_cast<WPARAM>(t.start)), last = first;
+        const sptr_t lines = sci(h, SCI_GETLINECOUNT);
+        auto blank = [&](sptr_t l) { return sci(h, SCI_GETLINEENDPOSITION, static_cast<WPARAM>(l)) == sci(h, SCI_GETLINEINDENTPOSITION, static_cast<WPARAM>(l)); };
+        while (first > 0 && t.start - sci(h, SCI_POSITIONFROMLINE, static_cast<WPARAM>(first)) < 20000 && !blank(first - 1))
+            --first;
+        while (last + 1 < lines && sci(h, SCI_POSITIONFROMLINE, static_cast<WPARAM>(last + 1)) - t.end < 20000 && !blank(last + 1))
+            ++last;
+        start = sci(h, SCI_POSITIONFROMLINE, static_cast<WPARAM>(first));
+        end = sci(h, SCI_GETLINEENDPOSITION, static_cast<WPARAM>(last));
+    }
+    for (const Word& w : misspellings(h, start, end, stylesToCheck(h), false))
+        if (static_cast<sptr_t>(w.start) == t.start && static_cast<sptr_t>(w.end) == t.end) {
+            t.lang = w.lang;
+            return true;
+        }
+    // Not in a checked style (Suggestions on code): the word by itself.
+    return !speller.correct(t.word);
 }
 
 Target* targetOf(GtkWidget* item)
@@ -501,7 +539,7 @@ GtkWidget* suggestionsMenu(const Target& target, bool misspelled, bool editItems
     GtkWidget* menu = gtk_menu_new();
     g_object_set_data_full(G_OBJECT(menu), "spellcheck-target", new Target(target), +[](gpointer p) { delete static_cast<Target*>(p); });
     if (misspelled) {
-        const std::vector<std::string> suggestions = speller.suggest(target.word);
+        const std::vector<std::string> suggestions = speller.suggest(target.word, target.lang);
         for (const std::string& s : suggestions) {
             GtkWidget* it = addItem(menu, s, G_CALLBACK(replaceWord));
             g_object_set_data_full(G_OBJECT(it), "spellcheck-word", g_strdup(s.c_str()), g_free);
@@ -513,6 +551,8 @@ GtkWidget* suggestionsMenu(const Target& target, bool misspelled, bool editItems
         }
         if (suggestions.empty())
             addItem(menu, "(No Suggestions)", nullptr, false);
+        if (!target.lang.empty() && speller.languages().size() > 1)
+            addItem(menu, "Language: " + target.lang, nullptr, false);
         addSeparator(menu);
         addItem(menu, "Ignore “" + target.word + "”", G_CALLBACK(ignoreWord));
         addItem(menu, "Add “" + target.word + "” to Dictionary", G_CALLBACK(addWord));
@@ -546,6 +586,7 @@ gboolean onButtonPress(GtkWidget* w, GdkEventButton* ev, gpointer)
     Target t;
     if (!wordAt(h, pos, t))
         return FALSE;
+    misspelledWord(t);
     GtkWidget* menu = suggestionsMenu(t, true, true);
     gtk_menu_attach_to_widget(GTK_MENU(menu), w, nullptr);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), reinterpret_cast<GdkEvent*>(ev));
@@ -648,7 +689,8 @@ void suggestAtCaret()
     auto* w = reinterpret_cast<GtkWidget*>(nppMsg(NPPM_GTKGETSCINTILLAWIDGET, 0, reinterpret_cast<LPARAM>(h)));
     if (!w || !gtk_widget_get_window(w))
         return;
-    GtkWidget* menu = suggestionsMenu(t, !speller.correct(t.word), false);
+    const bool misspelled = misspelledWord(t);
+    GtkWidget* menu = suggestionsMenu(t, misspelled, false);
     gtk_menu_attach_to_widget(GTK_MENU(menu), w, nullptr);
     const int x = static_cast<int>(sci(h, SCI_POINTXFROMPOSITION, 0, t.start));
     const int y = static_cast<int>(sci(h, SCI_POINTYFROMPOSITION, 0, t.start));
@@ -673,6 +715,7 @@ void showSettings()
     gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
 
     std::vector<std::pair<std::string, GtkWidget*>> langChecks;
+    GtkWidget* autoDetect = nullptr;
     const std::vector<std::string> dicts = speller.available() ? speller.dictionaries() : std::vector<std::string>();
     if (dicts.empty()) {
         GtkWidget* none = gtk_label_new(speller.available()
@@ -682,13 +725,21 @@ void showSettings()
         gtk_label_set_xalign(GTK_LABEL(none), 0);
         gtk_box_pack_start(GTK_BOX(box), none, FALSE, FALSE, 0);
     } else {
+        autoDetect = gtk_radio_button_new_with_mnemonic(nullptr, "Detect the language _automatically, among all installed");
+        GtkWidget* chosen = gtk_radio_button_new_with_mnemonic_from_widget(GTK_RADIO_BUTTON(autoDetect), "Only _these languages:");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settings.autoDetect ? autoDetect : chosen), TRUE);
+        gtk_box_pack_start(GTK_BOX(box), autoDetect, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), chosen, FALSE, FALSE, 0);
         GtkWidget* scroll = gtk_scrolled_window_new(nullptr, nullptr);
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
         gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
         gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), std::min<int>(static_cast<int>(dicts.size()), 8) * 26 + 4);
         GtkWidget* list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         gtk_container_set_border_width(GTK_CONTAINER(list), 4);
-        const std::vector<std::string>& active = speller.languages();
+        // In automatic mode the list keeps the user's own choice.
+        std::vector<std::string> active = settings.autoDetect ? settings.languages : speller.languages();
+        if (active.empty())
+            active.push_back(speller.defaultLanguage());
         for (const std::string& d : dicts) {
             GtkWidget* c = gtk_check_button_new_with_label(d.c_str());
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(c), std::find(active.begin(), active.end(), d) != active.end());
@@ -696,9 +747,18 @@ void showSettings()
             langChecks.emplace_back(d, c);
         }
         gtk_container_add(GTK_CONTAINER(scroll), list);
+        gtk_widget_set_margin_start(scroll, 24);
         gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
-        GtkWidget* hint = gtk_label_new("A word is correct when one of the chosen languages knows it.");
+        gtk_widget_set_sensitive(scroll, !settings.autoDetect);
+        g_signal_connect(chosen, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer list) {
+                             gtk_widget_set_sensitive(GTK_WIDGET(list), gtk_toggle_button_get_active(b));
+                         }), scroll);
+        GtkWidget* hint = gtk_label_new("Each paragraph is checked in the language that knows most of its words,\n"
+                                        "and words in another alphabet in a language written in it.\n"
+                                        "More languages: install their dictionaries, e.g.\n"
+                                        "sudo apt install hunspell-fr hunspell-es hunspell-uk");
         gtk_label_set_xalign(GTK_LABEL(hint), 0);
+        gtk_label_set_selectable(GTK_LABEL(hint), TRUE);
         gtk_style_context_add_class(gtk_widget_get_style_context(hint), "dim-label");
         gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 0);
     }
@@ -730,6 +790,8 @@ void showSettings()
     gtk_widget_show_all(dlg);
     const int response = gtk_dialog_run(GTK_DIALOG(dlg));
     if (response == GTK_RESPONSE_OK) {
+        if (autoDetect)
+            settings.autoDetect = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(autoDetect));
         if (!langChecks.empty()) {
             settings.languages.clear();
             for (const auto& [tag, check] : langChecks)
@@ -759,8 +821,9 @@ void about()
                  L"Checks spelling as you type, in the spirit of DSpellCheck: misspelled words are underlined, "
                  L"in source code only in comments and strings. Right-click one for suggestions, or use "
                  L"Plugins > Spell Checker > Suggestions (give it a shortcut in the Shortcut Mapper).\n\n"
-                 L"Dictionaries come from Enchant: install hunspell-xx (or aspell-xx) for your languages "
-                 L"and choose them in the settings. Words you add are kept in SpellCheck.dic in the plugins' "
+                 L"Dictionaries come from Enchant: install hunspell-xx (or aspell-xx) for your languages. "
+                 L"Each paragraph is checked in the installed language that knows most of its words "
+                 L"(or only in the languages chosen in the settings). Words you add are kept in SpellCheck.dic in the plugins' "
                  L"configuration folder.",
                  L"Spell Checker", MB_OK | MB_ICONINFORMATION);
 }

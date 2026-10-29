@@ -157,12 +157,22 @@ int main(int argc, char** argv)
     if (!rootDir)
         return 2;
     const fs::path tmp = rootDir;
+    // Dictionaries the developer keeps in their own configuration
+    // (~/.config/enchant/hunspell) stay visible.
+    // (Not g_get_user_config_dir(), which would keep the old value.)
+    const char* ownConfig = g_getenv("XDG_CONFIG_HOME");
+    const fs::path ownDicts = (ownConfig && *ownConfig ? fs::path(ownConfig) : fs::path(g_get_home_dir()) / ".config") / "enchant";
+    fs::create_directories(tmp / "config");
+    if (fs::is_directory(ownDicts))
+        fs::copy(ownDicts, tmp / "config" / "enchant", fs::copy_options::recursive);
     g_setenv("XDG_CONFIG_HOME", (tmp / "config").c_str(), TRUE);
     g_setenv("NPP_GTK_DATA_DIR", NPP_TEST_DATA_DIR, TRUE);
 
+    bool german = false;
     {
         spellcheck::Speller probe;
         const std::vector<std::string> dicts = probe.available() ? probe.dictionaries() : std::vector<std::string>();
+        german = std::find(dicts.begin(), dicts.end(), "de_DE") != dicts.end();
         if (std::find(dicts.begin(), dicts.end(), "en_US") == dicts.end()) {
             std::printf("SKIP: %s\n", probe.available() ? "no en_US dictionary (hunspell-en-us)" : probe.error().c_str());
             fs::remove_all(tmp);
@@ -173,7 +183,9 @@ int main(int argc, char** argv)
     const fs::path config = tmp / "config" / "notepad-plus-plus-gtk" / "plugins" / "config";
     fs::create_directories(config);
     writeFile(config / "SpellCheck.ini", "[SpellCheck]\nEnabled=true\nLanguages=en_US;\n");
-    writeFile(tmp / "notes.txt", "This sentense has a mistake.\nThe second line is fine.\nAnother eror here.\n");
+    // Detected per paragraph: the German one is checked in German.
+    writeFile(tmp / "notes.txt", "This sentense has a mistake.\nThe second line is fine.\nAnother eror here.\n\n"
+                                 "Das ist ein deutscher Absatz mit einem Fehlr darin.\n");
     writeFile(tmp / "code.cpp", "int mispeled = 0; // a commnet\nconst char* s = \"a strng\";\n");
 
     gtk_init(&argc, &argv);
@@ -201,6 +213,22 @@ int main(int argc, char** argv)
         CHECK(marked(v, find(v, "eror") + 1));
         CHECK(!marked(v, find(v, "This") + 1));
         CHECK(!marked(v, find(v, "second") + 1));
+        if (german) {
+            std::printf("a German paragraph is checked in German...\n");
+            CHECK(marked(v, find(v, "Fehlr") + 1));
+            CHECK(!marked(v, find(v, "deutscher") + 1));
+            CHECK(!marked(v, find(v, "Absatz") + 1));
+            GtkMenu* de = nullptr;
+            CHECK(rightClick(v, find(v, "Fehlr") + 1, &de) && de);
+            if (de) {
+                CHECK(itemLabelled(de, "Fehler") != nullptr);
+                CHECK(itemLabelled(de, "Language: de_DE") != nullptr);
+                gtk_menu_shell_deactivate(GTK_MENU_SHELL(de));
+                pump();
+            }
+        } else {
+            std::printf("SKIP German paragraph: no de_DE dictionary\n");
+        }
 
         std::printf("a right-click offers suggestions...\n");
         GtkMenu* menu = nullptr;
